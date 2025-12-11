@@ -1,13 +1,54 @@
 {
   "name": "monolith",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "description": "Deterministic Utility MCP Server - A Model Context Protocol server providing thousands of tested utility functions for AI agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "monolith": "dist/index.js"
   },
-  "keywords": [],
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "utilities",
+    "ai-tools",
+    "deterministic"
+  ],
   "author": "",
   "license": "ISC",
-  "type": "commonjs"
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.3",
+    "date-fns": "^4.0.0",
+    "fast-xml-parser": "^4.5.0",
+    "js-yaml": "^4.1.0",
+    "marked": "^13.0.0",
+    "papaparse": "^5.4.1",
+    "validator": "^13.12.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "@types/papaparse": "^5.3.14",
+    "@types/validator": "^13.12.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
 }
