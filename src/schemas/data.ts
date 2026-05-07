@@ -9,7 +9,7 @@ export const uniqueSchema = z.object({
 });
 
 export const sortBySchema = z.object({
-  array: z.array(z.record(z.unknown())).describe("Array of objects to sort"),
+  array: z.array(z.record(z.string(), z.unknown())).describe("Array of objects to sort"),
   key: z.string().describe("Key to sort by"),
   direction: z.enum(["asc", "desc"]).optional().default("asc").describe("Sort direction"),
 });
