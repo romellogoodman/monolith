@@ -17,17 +17,17 @@ process.on("SIGTERM", () => {
 
 const argv = process.argv.slice(2);
 
-if (argv.length === 0) {
-  runServer().catch((error) => {
-    console.error("Fatal error:", error);
-    process.exit(1);
-  });
+function fail(error: unknown): never {
+  console.error("Fatal error:", error);
+  process.exit(1);
+}
+
+if (argv.length > 0) {
+  runCli(argv).then((code) => process.exit(code), fail);
+} else if (process.stdin.isTTY) {
+  // Human at a shell — show CLI help instead of hanging on stdio.
+  runCli(["--help"]).then((code) => process.exit(code), fail);
 } else {
-  runCli(argv).then(
-    (code) => process.exit(code),
-    (error) => {
-      console.error("Fatal error:", error);
-      process.exit(1);
-    }
-  );
+  // Piped stdin (MCP client) — run as stdio server.
+  runServer().catch(fail);
 }

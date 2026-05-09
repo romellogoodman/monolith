@@ -187,7 +187,9 @@ Usage:
   monolith --help
   monolith --version
 
-Run without arguments to start the MCP server over stdio.
+MCP stdio mode starts automatically when stdin is piped (i.e. when an
+MCP client launches the binary). To run it manually from a terminal
+for debugging, redirect stdin: \`monolith < /dev/null\`.
 
 Examples:
   monolith strings/toCamelCase "hello world"
