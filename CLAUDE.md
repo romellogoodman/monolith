@@ -2,7 +2,7 @@
 
 ## What
 
-17+ deterministic utility functions exposed through **two surfaces that share one dispatch table**: an MCP stdio server and a POSIX-style CLI. Same binary; `monolith` with no args → MCP stdio, `monolith <args>` → CLI.
+17+ deterministic utility functions exposed through **two surfaces that share one dispatch table**: an MCP stdio server and a POSIX-style CLI. Same binary. Dispatch: argv present → CLI; argv empty + piped stdin → MCP stdio (MCP clients pipe JSON-RPC); argv empty + TTY stdin → CLI help.
 
 **Tech Stack:** TypeScript (strict, ESM), Node.js, `@modelcontextprotocol/sdk`, Zod, Vitest.
 

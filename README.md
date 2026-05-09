@@ -71,8 +71,12 @@ monolith --help
 monolith strings/toCamelCase "hello world"   # → helloWorld
 ```
 
-Running `monolith` with **no arguments** starts the MCP stdio server; any
-arguments route through the CLI adapter. The same binary handles both.
+**Mode selection:**
+- `monolith <args>` → CLI
+- `monolith` with piped stdin (how MCP clients invoke it) → MCP stdio server
+- `monolith` from a terminal → prints CLI help
+
+To start the MCP server manually from a terminal for debugging, redirect stdin: `monolith < /dev/null`.
 
 ## Development
 
