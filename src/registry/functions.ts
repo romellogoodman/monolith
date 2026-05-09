@@ -3,12 +3,14 @@
  * This file registers all available utility functions with their metadata
  */
 
-import { registerFunction } from "./index.js";
+import { registerFunction, getFunctionCount } from "./index.js";
 
 /**
  * Register all utility functions
  */
 export function registerAllFunctions() {
+  if (getFunctionCount() > 0) return;
+
   // String utilities
   registerFunction({
     name: "strings/toCamelCase",

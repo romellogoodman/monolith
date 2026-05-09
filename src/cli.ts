@@ -105,7 +105,9 @@ function isFieldRequired(schema: DispatchEntry["schema"], key: string): boolean 
 function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    process.stdin.on("data", (c: Buffer) => chunks.push(c));
+    process.stdin.on("data", (c: Buffer | string) => {
+      chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+    });
     process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
     process.stdin.on("error", reject);
   });

@@ -32,17 +32,20 @@ Three MCP tools enable function discovery:
 
 These tools query the registry and return structured data.
 
-### 3. Tool Registration Pattern
+### 3. Dispatch Table & Surfaces
 
-**File:** [src/server.ts](../src/server.ts:64-209)
+**File:** [src/registry/dispatch.ts](../src/registry/dispatch.ts)
 
-The server registers two types of handlers:
+A single `dispatchEntries` list maps function name → `{ schema, execute }`. Both the MCP adapter ([src/server.ts](../src/server.ts)) and the CLI adapter ([src/cli.ts](../src/cli.ts)) iterate this table; neither knows how the other renders input or output. Adding a function means one new entry.
 
-1. **`ListToolsRequestSchema`** - Returns all available tools with schemas
-2. **`CallToolRequestSchema`** - Executes tool calls:
-   - Parses input with Zod schema
-   - Calls utility function
-   - Returns JSON-stringified result
+The MCP adapter:
+1. Expands `dispatchEntries` into `ListToolsRequestSchema` tool descriptors
+2. Looks up by name on `CallToolRequestSchema`, calls `entry.execute(args)`, wraps result in MCP `{ content: [...] }` envelope
+
+The CLI adapter:
+1. Parses argv → `{ command, positionals, flags, json }`
+2. Looks up the entry, builds the args object from positionals/flags (stdin fills the first required field when piped)
+3. Calls `entry.execute(args)` and formats output per `--json` rules
 
 ### 4. Response Format
 
@@ -76,19 +79,22 @@ Zod schemas are exported and used in:
 ## Data Flow
 
 ```
-MCP Client Request
-  ↓
-Server CallToolRequestSchema handler
-  ↓
-Zod schema validation
-  ↓
-Utility function execution
-  ↓
-Response formatting (success/error)
-  ↓
-JSON stringification
-  ↓
-MCP Client Response
+  MCP CallTool              CLI argv
+       │                       │
+       └───────┬───────────────┘
+               ▼
+      getDispatchEntry(name)
+               ▼
+      entry.schema.parse(args)   (Zod validation)
+               ▼
+      entry.execute(args)        (utility function)
+               ▼
+      UtilityResponse<T>
+               ▼
+  ┌────────────┴────────────┐
+  ▼                         ▼
+MCP envelope           CLI output rules
+({content:[...]})      (scalar | JSON | --json envelope)
 ```
 
 ## Adding New Categories
@@ -99,7 +105,7 @@ To add a new category:
 2. Create `src/schemas/[category].ts` with Zod schemas
 3. Implement functions following response format
 4. Register functions in `src/registry/functions.ts`
-5. Add tool handlers in `src/server.ts`
+5. Add entries to `src/registry/dispatch.ts` (wires up both MCP and CLI)
 
 ## Performance Considerations
 
