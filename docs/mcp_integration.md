@@ -4,6 +4,8 @@
 
 This server implements the [Model Context Protocol](https://modelcontextprotocol.io) and can be used with any MCP-compatible client.
 
+The same binary also runs as a CLI when given arguments — see the [README](../README.md) for CLI usage. MCP stdio mode is selected by invoking `monolith` with **no arguments**.
+
 ## Configuration
 
 ### Claude Desktop
@@ -13,6 +15,18 @@ Add to your Claude Desktop config file:
 **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
+If you've run `npm link`:
+```json
+{
+  "mcpServers": {
+    "monolith": {
+      "command": "monolith"
+    }
+  }
+}
+```
+
+Otherwise, point at the built entry point directly:
 ```json
 {
   "mcpServers": {
@@ -319,11 +333,12 @@ The server communicates via stdio - you should see no output if running correctl
 
 ### Tool Not Found
 
-Verify the tool is registered:
+Verify the tool is registered by grepping the dispatch table:
 ```bash
-# Start server and list tools via MCP client
-# Or inspect src/server.ts ListToolsRequestSchema handler
+grep '"<function-name>"' src/registry/dispatch.ts
 ```
+
+Both MCP and CLI iterate [src/registry/dispatch.ts](../src/registry/dispatch.ts) — if it's not there, neither surface exposes it.
 
 ### Invalid Input Schema
 
