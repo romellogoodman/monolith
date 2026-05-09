@@ -107,35 +107,22 @@ registerFunction({
 - `tags` - Searchable keywords
 - `performance` - Expected execution time
 
-### Step 4: Register MCP Tool
+### Step 4: Add to the dispatch table
 
-**File:** [src/server.ts](../src/server.ts)
+**File:** [src/registry/dispatch.ts](../src/registry/dispatch.ts)
 
-Add two entries:
-
-**4a. In `ListToolsRequestSchema` handler** (around line 70):
+Add one entry. Both the MCP server and the CLI iterate this table, so no per-surface plumbing is required.
 
 ```typescript
-{
-  name: "strings/toSnakeCase",
-  description: "Convert string to snake_case format",
-  inputSchema: stringSchemas.toSnakeCaseSchema.shape,
-},
+entry(
+  "strings/toSnakeCase",
+  "Convert string to snake_case format",
+  stringSchemas.toSnakeCaseSchema,
+  (a) => stringCase.toSnakeCase(a.input)
+),
 ```
 
-**4b. In `CallToolRequestSchema` handler** (around line 200):
-
-```typescript
-if (name === "strings/toSnakeCase") {
-  const validated = stringSchemas.toSnakeCaseSchema.parse(args);
-  const result = stringCase.toSnakeCase(validated.input);
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
-  };
-}
-```
-
-Make sure to import the schema and function at the top of the file if needed.
+Import the schema and function at the top of `dispatch.ts` if the namespace isn't already imported.
 
 ### Step 5: Write Tests
 
@@ -199,7 +186,7 @@ For a completely new category (e.g., `crypto` for cryptographic functions):
 2. **Create schema file:** `src/schemas/crypto.ts`
 3. **Implement functions:** Following response format pattern
 4. **Register metadata:** Add all functions in `src/registry/functions.ts`
-5. **Import in server:** Add to imports and handlers in `src/server.ts`
+5. **Wire up dispatch:** Add entries to `src/registry/dispatch.ts` (import schema/util namespaces as needed)
 6. **Create tests:** `tests/unit/utils/crypto.test.ts`
 
 ## Common Patterns
@@ -254,9 +241,9 @@ try {
 - [ ] Utility function implemented in `src/utils/`
 - [ ] Zod schema defined in `src/schemas/`
 - [ ] Function metadata registered in `src/registry/functions.ts`
-- [ ] Tool listed in `ListToolsRequestSchema` handler
-- [ ] Tool handler added to `CallToolRequestSchema` handler
+- [ ] Dispatch entry added to `src/registry/dispatch.ts`
 - [ ] Unit tests written and passing
+- [ ] Verified via CLI (`monolith <new-function> ...`) and MCP
 - [ ] TypeScript compiles without errors
 - [ ] All tests pass (`npm test`)
 - [ ] Function executes in <10ms
