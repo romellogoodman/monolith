@@ -8,6 +8,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 
 import { registerAllFunctions } from "./registry/functions.js";
 import { dispatchEntries, getDispatchEntry } from "./registry/dispatch.js";
@@ -91,7 +92,9 @@ export function createServer() {
         ...dispatchEntries.map((e) => ({
           name: e.name,
           description: e.description,
-          inputSchema: e.schema.shape,
+          // MCP expects JSON Schema, not raw Zod shapes. `io: "input"` so
+          // fields with defaults aren't reported as required to the caller.
+          inputSchema: z.toJSONSchema(e.schema, { io: "input" }),
         })),
       ],
     };
