@@ -10,6 +10,7 @@ import {
   getFunction,
 } from "../../src/registry/index.js";
 import { registerAllFunctions } from "../../src/registry/functions.js";
+import { dispatchEntries } from "../../src/registry/dispatch.js";
 
 describe("Function Registry", () => {
   beforeAll(() => {
@@ -61,6 +62,36 @@ describe("Function Registry", () => {
     it("should return undefined for non-existent function", () => {
       const fn = getFunction("nonexistent/function");
       expect(fn).toBeUndefined();
+    });
+  });
+
+  describe("dispatch ↔ registry consistency", () => {
+    it("every dispatch entry has discoverable metadata", () => {
+      for (const entry of dispatchEntries) {
+        const meta = getFunction(entry.name);
+        expect(meta, `missing registry metadata for ${entry.name}`).toBeDefined();
+        expect(meta!.description).toBe(entry.description);
+      }
+    });
+
+    it("every dispatch entry has complete discovery extras (examples, tags, returns)", () => {
+      // Guards against adding a function to dispatch.ts and forgetting EXTRAS in
+      // functions.ts. Without this, `describe`/`search` quietly degrade.
+      for (const entry of dispatchEntries) {
+        const meta = getFunction(entry.name)!;
+        expect(meta.examples.length, `${entry.name} has no examples`).toBeGreaterThan(0);
+        expect(meta.tags.length, `${entry.name} has no tags`).toBeGreaterThan(1);
+        expect(meta.returns, `${entry.name} has no returns description`).not.toBe("");
+      }
+    });
+
+    it("derived parameters reflect the Zod schema", () => {
+      const truncate = getFunction("strings/truncate")!;
+      const paramNames = truncate.parameters.map((p) => p.name);
+      expect(paramNames).toEqual(["input", "length", "suffix"]);
+      expect(truncate.parameters.find((p) => p.name === "suffix")?.required).toBe(false);
+      expect(truncate.parameters.find((p) => p.name === "suffix")?.default).toBe("...");
+      expect(truncate.parameters.find((p) => p.name === "input")?.required).toBe(true);
     });
   });
 });

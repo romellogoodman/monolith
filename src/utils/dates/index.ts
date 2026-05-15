@@ -2,7 +2,13 @@
  * Date utility functions
  */
 
-import { parse, format, addDays as dateFnsAddDays, parseISO } from "date-fns";
+import {
+  parse,
+  format,
+  addDays as dateFnsAddDays,
+  parseISO,
+  differenceInCalendarDays,
+} from "date-fns";
 import { successResponse, errorResponse, type UtilityResponse } from "../../types/index.js";
 
 /**
@@ -77,6 +83,29 @@ export function addDays(isoDate: string, days: number): UtilityResponse<string> 
   } catch (error) {
     return errorResponse(
       error instanceof Error ? error.message : "Failed to add days",
+      "CALCULATION_ERROR"
+    );
+  }
+}
+
+/**
+ * Whole calendar days between two ISO dates (`to - from`). Negative when
+ * `to` is earlier than `from`.
+ */
+export function diffDays(from: string, to: string): UtilityResponse<number> {
+  try {
+    const a = parseISO(from);
+    const b = parseISO(to);
+    if (isNaN(a.getTime()) || isNaN(b.getTime())) {
+      return errorResponse("Invalid ISO date string", "INVALID_DATE");
+    }
+    return successResponse(differenceInCalendarDays(b, a), {
+      inputType: "string",
+      outputType: "number",
+    });
+  } catch (error) {
+    return errorResponse(
+      error instanceof Error ? error.message : "Failed to diff dates",
       "CALCULATION_ERROR"
     );
   }

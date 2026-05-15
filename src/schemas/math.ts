@@ -14,3 +14,9 @@ export const clampSchema = z.object({
   min: z.number().describe("Minimum value"),
   max: z.number().describe("Maximum value"),
 });
+
+export const percentageSchema = z.object({
+  value: z.number().describe("Part value"),
+  total: z.number().describe("Whole value (cannot be zero)"),
+  decimals: z.number().int().nonnegative().optional().default(2).describe("Decimal places to round to"),
+});

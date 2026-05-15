@@ -4,17 +4,14 @@
 
 import { successResponse, errorResponse, type UtilityResponse } from "../../types/index.js";
 
+const ARRAY_META = { inputType: "array", outputType: "array" } as const;
+
 /**
  * Get unique values from array
  */
 export function unique(array: unknown[]): UtilityResponse<unknown[]> {
   try {
-    const result = [...new Set(array)];
-
-    return successResponse(result, {
-      inputType: "array",
-      outputType: "array",
-    });
+    return successResponse([...new Set(array)], ARRAY_META);
   } catch (error) {
     return errorResponse(
       error instanceof Error ? error.message : "Failed to get unique values",
@@ -46,14 +43,47 @@ export function sortBy(
       return direction === "asc" ? comparison : -comparison;
     });
 
-    return successResponse(result, {
-      inputType: "array",
-      outputType: "array",
-    });
+    return successResponse(result, ARRAY_META);
   } catch (error) {
     return errorResponse(
       error instanceof Error ? error.message : "Failed to sort array",
       "SORT_ERROR"
+    );
+  }
+}
+
+/**
+ * Group an array of objects by the value of a key.
+ */
+export function groupBy(
+  array: Array<Record<string, unknown>>,
+  key: string
+): UtilityResponse<Record<string, Array<Record<string, unknown>>>> {
+  try {
+    const result: Record<string, Array<Record<string, unknown>>> = {};
+    for (const item of array) {
+      const groupKey = String(item[key]);
+      (result[groupKey] ??= []).push(item);
+    }
+    return successResponse(result, { inputType: "array", outputType: "object" });
+  } catch (error) {
+    return errorResponse(
+      error instanceof Error ? error.message : "Failed to group array",
+      "ARRAY_ERROR"
+    );
+  }
+}
+
+/**
+ * Flatten a nested array. With no `depth`, flattens all the way.
+ */
+export function flatten(array: unknown[], depth?: number): UtilityResponse<unknown[]> {
+  try {
+    return successResponse(array.flat(depth ?? Infinity), ARRAY_META);
+  } catch (error) {
+    return errorResponse(
+      error instanceof Error ? error.message : "Failed to flatten array",
+      "ARRAY_ERROR"
     );
   }
 }
