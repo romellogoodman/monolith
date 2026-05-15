@@ -31,6 +31,8 @@ interface ParsedArgv {
   positionals: string[];
   flags: Record<string, string | boolean>;
   json: boolean;
+  raw: boolean;
+  quiet: boolean;
   help: boolean;
 }
 
@@ -40,6 +42,8 @@ function parseArgv(argv: string[]): ParsedArgv {
     positionals: [],
     flags: {},
     json: false,
+    raw: false,
+    quiet: false,
     help: false,
   };
 
@@ -48,6 +52,14 @@ function parseArgv(argv: string[]): ParsedArgv {
 
     if (tok === "--json") {
       out.json = true;
+      continue;
+    }
+    if (tok === "--raw") {
+      out.raw = true;
+      continue;
+    }
+    if (tok === "--quiet" || tok === "-q") {
+      out.quiet = true;
       continue;
     }
     if (tok === "--help" || tok === "-h") {
@@ -157,18 +169,60 @@ function camelToKebab(s: string): string {
 
 class UsageError extends Error {}
 
-function formatResult(result: UtilityResponse<unknown>, json: boolean): {
+interface OutputMode {
+  json: boolean;
+  raw: boolean;
+  quiet: boolean;
+}
+
+/** Compact, scalar-safe stringify for --raw line items. */
+function rawScalar(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean" || v === null) return String(v);
+  return JSON.stringify(v);
+}
+
+function formatResult(
+  result: UtilityResponse<unknown>,
+  mode: OutputMode
+): {
   stdout: string | null;
   stderr: string | null;
   exit: number;
 } {
-  if (json) {
-    return { stdout: JSON.stringify(result, null, 2), stderr: null, exit: result.success ? 0 : 2 };
+  if (mode.json) {
+    return {
+      stdout: mode.quiet ? null : JSON.stringify(result, null, 2),
+      stderr: null,
+      exit: result.success ? 0 : 2,
+    };
   }
   if (!result.success) {
     return { stdout: null, stderr: `error: ${result.error}`, exit: 2 };
   }
+
   const v = result.result;
+
+  // --quiet: no stdout. Boolean results drive the exit code (grep -q style).
+  if (mode.quiet) {
+    if (typeof v === "boolean") return { stdout: null, stderr: null, exit: v ? 0 : 1 };
+    return { stdout: null, stderr: null, exit: 0 };
+  }
+
+  // --raw: line-oriented output for shell pipelines.
+  if (mode.raw) {
+    if (Array.isArray(v)) {
+      return { stdout: v.map(rawScalar).join("\n"), stderr: null, exit: 0 };
+    }
+    if (v !== null && typeof v === "object") {
+      const lines = Object.entries(v as Record<string, unknown>).map(
+        ([k, val]) => `${k}=${rawScalar(val)}`
+      );
+      return { stdout: lines.join("\n"), stderr: null, exit: 0 };
+    }
+    // scalar — same as default mode
+  }
+
   if (typeof v === "string") return { stdout: v, stderr: null, exit: 0 };
   if (typeof v === "number" || typeof v === "boolean" || v === null) {
     return { stdout: String(v), stderr: null, exit: 0 };
@@ -193,17 +247,24 @@ for debugging, redirect stdin: \`monolith < /dev/null\`.
 
 Examples:
   monolith strings/toCamelCase "hello world"
-  echo "hello world" | monolith strings/toCamelCase
+  echo "hello world" | monolith strings/slugify
   monolith strings/truncate "Hello World" 8
   monolith math/clamp 100 --min 0 --max 50
   monolith dates/addDays --iso-date 2026-05-08T00:00:00Z --days 7
-  monolith conversion/csvToJson < data.csv
-  monolith strings/toCamelCase "hello" --json
+  cat config.yaml | monolith conversion/yamlToJson | jq .key
+  monolith validation/isEmail "x@y.com" --quiet && echo ok
+  monolith data/arrays/unique '[1,2,2,3]' --raw | while read n; do ...; done
+
+Output flags:
+  --json            Full {success, result, metadata} envelope
+  --raw             Line-oriented: arrays one item/line, objects key=value/line
+  -q, --quiet       No stdout; boolean results drive exit code (0=true, 1=false)
 
 Discovery:
   monolith list                    # list all categories
-  monolith search email            # search by keyword
-  monolith describe strings/toCamelCase
+  monolith list strings            # list functions in a category
+  monolith search hash             # search by keyword
+  monolith describe strings/slugify
 `;
 }
 
@@ -232,6 +293,8 @@ ${params.join("\n")}
 
 ${examples.length > 0 ? "Examples:\n" + examples.join("\n") + "\n" : ""}Flags:
   --json            Output the full {success, result, metadata} envelope
+  --raw             Line-oriented output (arrays one item/line, objects key=value/line)
+  -q, --quiet       No stdout; boolean results drive exit code (0=true, 1=false)
   -h, --help        Show this help
 `;
 }
@@ -315,7 +378,7 @@ export async function runCli(argv: string[]): Promise<number> {
 
     const args = await buildArgs(entry, parsed);
     const result = entry.execute(args);
-    const out = formatResult(result, parsed.json);
+    const out = formatResult(result, { json: parsed.json, raw: parsed.raw, quiet: parsed.quiet });
     if (out.stdout !== null) process.stdout.write(out.stdout + "\n");
     if (out.stderr !== null) process.stderr.write(out.stderr + "\n");
     return out.exit;

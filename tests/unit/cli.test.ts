@@ -138,6 +138,49 @@ describe("CLI — output formatting", () => {
     expect(parsed.metadata).toBeDefined();
     expect(r.exit).toBe(0);
   });
+
+  it("--raw emits arrays one element per line", async () => {
+    const r = await run(["data/arrays/unique", "[1,2,2,3]", "--raw"]);
+    expect(r.stdout).toBe("1\n2\n3\n");
+    expect(r.exit).toBe(0);
+  });
+
+  it("--raw emits objects as key=value lines", async () => {
+    const r = await run(["strings/wordCount", "hello world", "--raw"]);
+    expect(r.stdout).toBe("words=2\nchars=11\nlines=1\n");
+    expect(r.exit).toBe(0);
+  });
+
+  it("--raw is a no-op for scalar results", async () => {
+    const r = await run(["strings/toCamelCase", "hello world", "--raw"]);
+    expect(r.stdout.trim()).toBe("helloWorld");
+    expect(r.exit).toBe(0);
+  });
+
+  it("--quiet suppresses stdout and exits 0 for true boolean", async () => {
+    const r = await run(["validation/isEmail", "a@b.com", "--quiet"]);
+    expect(r.stdout).toBe("");
+    expect(r.exit).toBe(0);
+  });
+
+  it("--quiet exits 1 for false boolean", async () => {
+    const r = await run(["validation/isEmail", "nope", "-q"]);
+    expect(r.stdout).toBe("");
+    expect(r.exit).toBe(1);
+  });
+
+  it("--quiet suppresses stdout but exits 0 for non-boolean success", async () => {
+    const r = await run(["strings/toCamelCase", "hello", "-q"]);
+    expect(r.stdout).toBe("");
+    expect(r.exit).toBe(0);
+  });
+
+  it("--quiet preserves exit 2 for execution errors", async () => {
+    const r = await run(["dates/parseDate", "not a date", "-q"]);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toMatch(/error:/);
+    expect(r.exit).toBe(2);
+  });
 });
 
 describe("CLI — error paths", () => {
