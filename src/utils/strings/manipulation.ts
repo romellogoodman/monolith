@@ -33,3 +33,77 @@ export function truncate(
     );
   }
 }
+
+/**
+ * Count words, characters, and lines in a string (a deterministic `wc`).
+ */
+export function wordCount(
+  input: string
+): UtilityResponse<{ words: number; chars: number; lines: number }> {
+  try {
+    const words = input.trim() === "" ? 0 : input.trim().split(/\s+/).length;
+    const chars = input.length;
+    // POSIX `wc -l` counts newline characters, not visual lines; a non-empty
+    // string without a trailing newline still has 1 line of content.
+    const lines = input === "" ? 0 : input.split("\n").length;
+    return successResponse(
+      { words, chars, lines },
+      { inputType: "string", outputType: "object" }
+    );
+  } catch (error) {
+    return errorResponse(
+      error instanceof Error ? error.message : "Failed to count string",
+      "COUNT_ERROR"
+    );
+  }
+}
+
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+const HTML_UNESCAPES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&#x27;": "'",
+  "&#x2F;": "/",
+};
+
+/**
+ * Escape HTML-significant characters (&, <, >, ", ').
+ */
+export function escapeHtml(input: string): UtilityResponse<string> {
+  try {
+    const result = input.replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
+    return successResponse(result, { inputType: "string", outputType: "string" });
+  } catch (error) {
+    return errorResponse(
+      error instanceof Error ? error.message : "Failed to escape HTML",
+      "ESCAPE_ERROR"
+    );
+  }
+}
+
+/**
+ * Unescape the common HTML entities (&amp;, &lt;, &gt;, &quot;, &#39;).
+ */
+export function unescapeHtml(input: string): UtilityResponse<string> {
+  try {
+    const result = input.replace(
+      /&(amp|lt|gt|quot|#39|#x27|#x2F);/g,
+      (match) => HTML_UNESCAPES[match]
+    );
+    return successResponse(result, { inputType: "string", outputType: "string" });
+  } catch (error) {
+    return errorResponse(
+      error instanceof Error ? error.message : "Failed to unescape HTML",
+      "ESCAPE_ERROR"
+    );
+  }
+}

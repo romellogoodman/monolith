@@ -18,3 +18,8 @@ export const addDaysSchema = z.object({
   isoDate: z.string().describe("ISO date string"),
   days: z.number().int().describe("Number of days to add (negative to subtract)"),
 });
+
+export const diffDaysSchema = z.object({
+  from: z.string().describe("Start ISO date string"),
+  to: z.string().describe("End ISO date string"),
+});

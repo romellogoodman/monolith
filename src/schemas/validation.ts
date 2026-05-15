@@ -15,3 +15,11 @@ export const isUrlSchema = z.object({
 export const isUuidSchema = z.object({
   input: z.string().describe("String to validate as UUID"),
 });
+
+export const isJsonSchema = z.object({
+  input: z.string().describe("String to validate as JSON"),
+});
+
+export const isIsoDateSchema = z.object({
+  input: z.string().describe("String to validate as ISO 8601 date"),
+});

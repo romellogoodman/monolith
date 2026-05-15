@@ -1,555 +1,352 @@
 /**
- * Function metadata registration
- * This file registers all available utility functions with their metadata
+ * Function metadata registration.
+ *
+ * Name, description, category/subcategory, and parameter schema are derived
+ * from the dispatch table — the single source of truth — so they can't drift.
+ * Only the bits that genuinely can't be derived from a Zod schema live here:
+ * examples, tags, and a human-readable `returns` string.
  */
 
+import { z } from "zod";
+import { dispatchEntries, type DispatchEntry } from "./dispatch.js";
 import { registerFunction, getFunctionCount } from "./index.js";
+import type { Example, ParameterInfo } from "../types/index.js";
+
+interface FunctionExtras {
+  /** Override subcategory when it's not in the name path (e.g. strings/truncate → manipulation). */
+  subcategory?: string;
+  returns: string;
+  examples: Example[];
+  tags: string[];
+  performance?: string;
+}
+
+const EXTRAS: Record<string, FunctionExtras> = {
+  "strings/toCamelCase": {
+    subcategory: "case",
+    returns: "string in camelCase format",
+    tags: ["string", "case", "camelCase", "transform"],
+    examples: [
+      { description: "Hyphenated", input: { input: "hello-world" }, output: "helloWorld" },
+      { description: "Spaced", input: { input: "Hello World" }, output: "helloWorld" },
+    ],
+  },
+  "strings/toKebabCase": {
+    subcategory: "case",
+    returns: "string in kebab-case format",
+    tags: ["string", "case", "kebabCase", "transform"],
+    examples: [{ description: "camelCase", input: { input: "helloWorld" }, output: "hello-world" }],
+  },
+  "strings/toSnakeCase": {
+    subcategory: "case",
+    returns: "string in snake_case format",
+    tags: ["string", "case", "snakeCase", "transform"],
+    examples: [{ description: "camelCase", input: { input: "helloWorld" }, output: "hello_world" }],
+  },
+  "strings/toPascalCase": {
+    subcategory: "case",
+    returns: "string in PascalCase format",
+    tags: ["string", "case", "pascalCase", "transform"],
+    examples: [{ description: "Spaced", input: { input: "hello world" }, output: "HelloWorld" }],
+  },
+  "strings/toTitleCase": {
+    subcategory: "case",
+    returns: "string in Title Case format",
+    tags: ["string", "case", "titleCase", "transform"],
+    examples: [{ description: "camelCase", input: { input: "helloWorld" }, output: "Hello World" }],
+  },
+  "strings/slugify": {
+    subcategory: "case",
+    returns: "URL-safe lowercase slug",
+    tags: ["string", "slug", "url", "transform"],
+    examples: [{ description: "Title", input: { input: "My Blog Post!" }, output: "my-blog-post" }],
+  },
+  "strings/truncate": {
+    subcategory: "manipulation",
+    returns: "truncated string",
+    tags: ["string", "truncate", "shorten", "ellipsis"],
+    examples: [{ description: "Long string", input: { input: "Hello World", length: 8 }, output: "Hello..." }],
+  },
+  "strings/wordCount": {
+    subcategory: "manipulation",
+    returns: "object with words, chars, and lines counts",
+    tags: ["string", "count", "words", "wc"],
+    examples: [
+      {
+        description: "Two words",
+        input: { input: "hello world" },
+        output: { words: 2, chars: 11, lines: 1 },
+      },
+    ],
+  },
+  "strings/escapeHtml": {
+    subcategory: "manipulation",
+    returns: "HTML-escaped string",
+    tags: ["string", "html", "escape", "sanitize"],
+    examples: [{ description: "Tag", input: { input: "<b>bold</b>" }, output: "&lt;b&gt;bold&lt;/b&gt;" }],
+  },
+  "strings/unescapeHtml": {
+    subcategory: "manipulation",
+    returns: "unescaped string",
+    tags: ["string", "html", "unescape", "entities"],
+    examples: [{ description: "Entities", input: { input: "&lt;b&gt;" }, output: "<b>" }],
+  },
+  "validation/isEmail": {
+    returns: "boolean indicating if input is a valid email",
+    tags: ["validation", "email", "check", "verify"],
+    examples: [
+      { description: "Valid", input: { input: "user@example.com" }, output: true },
+      { description: "Invalid", input: { input: "not-an-email" }, output: false },
+    ],
+  },
+  "validation/isUrl": {
+    returns: "boolean indicating if input is a valid URL",
+    tags: ["validation", "url", "link", "check"],
+    examples: [{ description: "Valid", input: { input: "https://example.com" }, output: true }],
+  },
+  "validation/isUuid": {
+    returns: "boolean indicating if input is a valid UUID",
+    tags: ["validation", "uuid", "guid", "check"],
+    examples: [
+      { description: "Valid", input: { input: "550e8400-e29b-41d4-a716-446655440000" }, output: true },
+    ],
+  },
+  "validation/isJson": {
+    returns: "boolean indicating if input is syntactically valid JSON",
+    tags: ["validation", "json", "parse", "check"],
+    examples: [
+      { description: "Valid", input: { input: '{"a":1}' }, output: true },
+      { description: "Invalid", input: { input: "{bad}" }, output: false },
+    ],
+  },
+  "validation/isIsoDate": {
+    returns: "boolean indicating if input is a valid ISO 8601 date",
+    tags: ["validation", "date", "iso8601", "check"],
+    examples: [{ description: "Valid", input: { input: "2026-05-15T00:00:00Z" }, output: true }],
+  },
+  "conversion/jsonToCsv": {
+    returns: "CSV string representation",
+    tags: ["conversion", "json", "csv", "format"],
+    examples: [
+      {
+        description: "Array of objects",
+        input: { input: [{ name: "Alice", age: 30 }] },
+        output: "name,age\r\nAlice,30",
+      },
+    ],
+    performance: "< 5ms",
+  },
+  "conversion/csvToJson": {
+    returns: "array of objects",
+    tags: ["conversion", "csv", "json", "parse"],
+    examples: [
+      { description: "Simple CSV", input: { input: "name,age\nAlice,30" }, output: [{ name: "Alice", age: "30" }] },
+    ],
+    performance: "< 5ms",
+  },
+  "conversion/yamlToJson": {
+    returns: "parsed JSON value",
+    tags: ["conversion", "yaml", "json", "parse"],
+    examples: [{ description: "Mapping", input: { input: "a: 1\nb: 2" }, output: { a: 1, b: 2 } }],
+    performance: "< 5ms",
+  },
+  "conversion/jsonToYaml": {
+    returns: "YAML string",
+    tags: ["conversion", "json", "yaml", "serialize"],
+    examples: [{ description: "Object", input: { input: { a: 1 } }, output: "a: 1\n" }],
+    performance: "< 5ms",
+  },
+  "conversion/xmlToJson": {
+    returns: "parsed JSON object",
+    tags: ["conversion", "xml", "json", "parse"],
+    examples: [{ description: "Element", input: { input: "<a>1</a>" }, output: { a: 1 } }],
+    performance: "< 5ms",
+  },
+  "conversion/markdownToHtml": {
+    returns: "HTML string",
+    tags: ["conversion", "markdown", "html", "render"],
+    examples: [{ description: "Bold", input: { input: "**hi**" }, output: "<p><strong>hi</strong></p>\n" }],
+    performance: "< 5ms",
+  },
+  "dates/parseDate": {
+    subcategory: "parsing",
+    returns: "ISO 8601 date string",
+    tags: ["date", "parse", "iso", "format"],
+    examples: [{ description: "Standard", input: { input: "2025-12-11" }, output: "2025-12-11T00:00:00.000Z" }],
+    performance: "< 2ms",
+  },
+  "dates/formatDate": {
+    subcategory: "formatting",
+    returns: "formatted date string",
+    tags: ["date", "format", "display"],
+    examples: [
+      { description: "US date", input: { isoDate: "2025-12-11T00:00:00.000Z", format: "MMMM d, yyyy" }, output: "December 11, 2025" },
+    ],
+    performance: "< 2ms",
+  },
+  "dates/addDays": {
+    subcategory: "arithmetic",
+    returns: "ISO date string with days added",
+    tags: ["date", "add", "subtract", "arithmetic"],
+    examples: [
+      { description: "Add 7", input: { isoDate: "2025-12-11T00:00:00.000Z", days: 7 }, output: "2025-12-18T00:00:00.000Z" },
+    ],
+    performance: "< 2ms",
+  },
+  "dates/diffDays": {
+    subcategory: "arithmetic",
+    returns: "signed whole number of calendar days",
+    tags: ["date", "diff", "difference", "arithmetic"],
+    examples: [{ description: "One week", input: { from: "2026-01-01", to: "2026-01-08" }, output: 7 }],
+    performance: "< 2ms",
+  },
+  "math/round": {
+    returns: "rounded number",
+    tags: ["math", "round", "decimal", "precision"],
+    examples: [{ description: "2 decimals", input: { value: 3.14159, decimals: 2 }, output: 3.14 }],
+  },
+  "math/clamp": {
+    returns: "clamped number",
+    tags: ["math", "clamp", "limit", "constrain"],
+    examples: [{ description: "Above max", input: { value: 100, min: 0, max: 50 }, output: 50 }],
+  },
+  "math/percentage": {
+    returns: "percentage value",
+    tags: ["math", "percentage", "ratio", "fraction"],
+    examples: [{ description: "Quarter", input: { value: 25, total: 100 }, output: 25 }],
+  },
+  "data/arrays/unique": {
+    returns: "array of unique values",
+    tags: ["data", "array", "unique", "dedupe"],
+    examples: [{ description: "Dedupe", input: { array: [1, 2, 2, 3] }, output: [1, 2, 3] }],
+    performance: "< 2ms",
+  },
+  "data/arrays/sortBy": {
+    returns: "sorted array",
+    tags: ["data", "array", "sort", "order"],
+    examples: [
+      { description: "By age", input: { array: [{ age: 30 }, { age: 25 }], key: "age" }, output: [{ age: 25 }, { age: 30 }] },
+    ],
+    performance: "< 5ms",
+  },
+  "data/arrays/groupBy": {
+    returns: "object mapping key values to arrays of items",
+    tags: ["data", "array", "group", "partition"],
+    examples: [
+      { description: "By kind", input: { array: [{ kind: "a" }, { kind: "b" }], key: "kind" }, output: { a: [{ kind: "a" }], b: [{ kind: "b" }] } },
+    ],
+    performance: "< 5ms",
+  },
+  "data/arrays/flatten": {
+    returns: "flattened array",
+    tags: ["data", "array", "flatten", "nested"],
+    examples: [{ description: "Deep", input: { array: [1, [2, [3]]] }, output: [1, 2, 3] }],
+    performance: "< 2ms",
+  },
+  "data/objects/pick": {
+    returns: "object with only the listed keys",
+    tags: ["data", "object", "pick", "subset"],
+    examples: [{ description: "Two keys", input: { object: { a: 1, b: 2, c: 3 }, keys: ["a", "b"] }, output: { a: 1, b: 2 } }],
+  },
+  "data/objects/omit": {
+    returns: "object without the listed keys",
+    tags: ["data", "object", "omit", "exclude"],
+    examples: [{ description: "Drop one", input: { object: { a: 1, b: 2 }, keys: ["b"] }, output: { a: 1 } }],
+  },
+  "encoding/base64Encode": {
+    returns: "base64 encoded string",
+    tags: ["encoding", "base64", "encode"],
+    examples: [{ description: "Simple", input: { input: "Hello World" }, output: "SGVsbG8gV29ybGQ=" }],
+  },
+  "encoding/base64Decode": {
+    returns: "decoded string",
+    tags: ["encoding", "base64", "decode"],
+    examples: [{ description: "Simple", input: { input: "SGVsbG8gV29ybGQ=" }, output: "Hello World" }],
+  },
+  "encoding/urlEncode": {
+    returns: "percent-encoded string",
+    tags: ["encoding", "url", "uri", "encode"],
+    examples: [{ description: "Space + slash", input: { input: "a b/c" }, output: "a%20b%2Fc" }],
+  },
+  "encoding/urlDecode": {
+    returns: "decoded string",
+    tags: ["encoding", "url", "uri", "decode"],
+    examples: [{ description: "Percent-encoded", input: { input: "a%20b%2Fc" }, output: "a b/c" }],
+  },
+  "encoding/hexEncode": {
+    returns: "lowercase hex string",
+    tags: ["encoding", "hex", "encode"],
+    examples: [{ description: "Simple", input: { input: "hi" }, output: "6869" }],
+  },
+  "encoding/hexDecode": {
+    returns: "decoded UTF-8 string",
+    tags: ["encoding", "hex", "decode"],
+    examples: [{ description: "Simple", input: { input: "6869" }, output: "hi" }],
+  },
+  "encoding/hashSha256": {
+    returns: "64-char lowercase hex digest",
+    tags: ["encoding", "hash", "sha256", "digest", "checksum"],
+    examples: [
+      { description: "Empty", input: { input: "" }, output: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+    ],
+  },
+  "encoding/hashMd5": {
+    returns: "32-char lowercase hex digest (non-cryptographic)",
+    tags: ["encoding", "hash", "md5", "digest", "checksum"],
+    examples: [
+      { description: "Empty", input: { input: "" }, output: "d41d8cd98f00b204e9800998ecf8427e" },
+    ],
+  },
+};
+
+/** Derive ParameterInfo[] from a Zod object schema via its JSON Schema projection. */
+function deriveParameters(schema: DispatchEntry["schema"]): ParameterInfo[] {
+  const js = z.toJSONSchema(schema, { io: "input" }) as {
+    properties?: Record<string, { type?: string | string[]; description?: string; default?: unknown }>;
+    required?: string[];
+  };
+  const required = new Set(js.required ?? []);
+  return Object.entries(js.properties ?? {}).map(([name, prop]) => {
+    const type = Array.isArray(prop.type) ? prop.type.join(" | ") : (prop.type ?? "unknown");
+    const info: ParameterInfo = {
+      name,
+      type,
+      description: prop.description ?? "",
+      required: required.has(name),
+    };
+    if (prop.default !== undefined) info.default = prop.default;
+    return info;
+  });
+}
+
+/** Derive category + subcategory from `a/b/c`-style names. */
+function splitName(name: string): { category: string; subcategory?: string } {
+  const parts = name.split("/");
+  return {
+    category: parts[0],
+    subcategory: parts.length > 2 ? parts[1] : undefined,
+  };
+}
 
 /**
- * Register all utility functions
+ * Register all utility functions, deriving metadata from the dispatch table.
  */
 export function registerAllFunctions() {
   if (getFunctionCount() > 0) return;
 
-  // String utilities
-  registerFunction({
-    name: "strings/toCamelCase",
-    category: "strings",
-    subcategory: "case",
-    description: "Convert string to camelCase format",
-    parameters: [
-      {
-        name: "input",
-        type: "string",
-        description: "String to convert to camelCase",
-        required: true,
-      },
-    ],
-    returns: "string in camelCase format",
-    examples: [
-      {
-        description: "Convert hyphenated string",
-        input: { input: "hello-world" },
-        output: "helloWorld",
-      },
-      {
-        description: "Convert spaced string",
-        input: { input: "Hello World" },
-        output: "helloWorld",
-      },
-    ],
-    tags: ["string", "case", "camelCase", "transform"],
-    performance: "< 1ms",
-  });
-
-  registerFunction({
-    name: "strings/toKebabCase",
-    category: "strings",
-    subcategory: "case",
-    description: "Convert string to kebab-case format",
-    parameters: [
-      {
-        name: "input",
-        type: "string",
-        description: "String to convert to kebab-case",
-        required: true,
-      },
-    ],
-    returns: "string in kebab-case format",
-    examples: [
-      {
-        description: "Convert camelCase string",
-        input: { input: "helloWorld" },
-        output: "hello-world",
-      },
-      {
-        description: "Convert spaced string",
-        input: { input: "Hello World" },
-        output: "hello-world",
-      },
-    ],
-    tags: ["string", "case", "kebabCase", "transform"],
-    performance: "< 1ms",
-  });
-
-  registerFunction({
-    name: "strings/truncate",
-    category: "strings",
-    subcategory: "manipulation",
-    description: "Truncate string to specified length with optional suffix",
-    parameters: [
-      {
-        name: "input",
-        type: "string",
-        description: "String to truncate",
-        required: true,
-      },
-      {
-        name: "length",
-        type: "number",
-        description: "Maximum length",
-        required: true,
-      },
-      {
-        name: "suffix",
-        type: "string",
-        description: "Suffix to append when truncated",
-        required: false,
-        default: "...",
-      },
-    ],
-    returns: "truncated string",
-    examples: [
-      {
-        description: "Truncate long string",
-        input: { input: "Hello World", length: 8 },
-        output: "Hello...",
-      },
-      {
-        description: "String shorter than limit",
-        input: { input: "Hi", length: 10 },
-        output: "Hi",
-      },
-    ],
-    tags: ["string", "truncate", "shorten", "ellipsis"],
-    performance: "< 1ms",
-  });
-
-  // Validation utilities
-  registerFunction({
-    name: "validation/isEmail",
-    category: "validation",
-    description: "Validate if string is a valid email address",
-    parameters: [
-      {
-        name: "input",
-        type: "string",
-        description: "String to validate as email",
-        required: true,
-      },
-    ],
-    returns: "boolean indicating if input is valid email",
-    examples: [
-      {
-        description: "Valid email",
-        input: { input: "user@example.com" },
-        output: true,
-      },
-      {
-        description: "Invalid email",
-        input: { input: "not-an-email" },
-        output: false,
-      },
-    ],
-    tags: ["validation", "email", "check", "verify"],
-    performance: "< 1ms",
-  });
-
-  registerFunction({
-    name: "validation/isUrl",
-    category: "validation",
-    description: "Validate if string is a valid URL",
-    parameters: [
-      {
-        name: "input",
-        type: "string",
-        description: "String to validate as URL",
-        required: true,
-      },
-    ],
-    returns: "boolean indicating if input is valid URL",
-    examples: [
-      {
-        description: "Valid URL",
-        input: { input: "https://example.com" },
-        output: true,
-      },
-      {
-        description: "Invalid URL",
-        input: { input: "not a url" },
-        output: false,
-      },
-    ],
-    tags: ["validation", "url", "link", "check"],
-    performance: "< 1ms",
-  });
-
-  registerFunction({
-    name: "validation/isUuid",
-    category: "validation",
-    description: "Validate if string is a valid UUID",
-    parameters: [
-      {
-        name: "input",
-        type: "string",
-        description: "String to validate as UUID",
-        required: true,
-      },
-    ],
-    returns: "boolean indicating if input is valid UUID",
-    examples: [
-      {
-        description: "Valid UUID",
-        input: { input: "550e8400-e29b-41d4-a716-446655440000" },
-        output: true,
-      },
-      {
-        description: "Invalid UUID",
-        input: { input: "not-a-uuid" },
-        output: false,
-      },
-    ],
-    tags: ["validation", "uuid", "guid", "check"],
-    performance: "< 1ms",
-  });
-
-  // Conversion utilities
-  registerFunction({
-    name: "conversion/jsonToCsv",
-    category: "conversion",
-    description: "Convert JSON array of objects to CSV string",
-    parameters: [
-      {
-        name: "input",
-        type: "array",
-        description: "Array of objects to convert to CSV",
-        required: true,
-      },
-    ],
-    returns: "CSV string representation",
-    examples: [
-      {
-        description: "Convert simple array",
-        input: {
-          input: [
-            { name: "Alice", age: 30 },
-            { name: "Bob", age: 25 },
-          ],
-        },
-        output: "name,age\\nAlice,30\\nBob,25",
-      },
-    ],
-    tags: ["conversion", "json", "csv", "format"],
-    performance: "< 5ms",
-  });
-
-  registerFunction({
-    name: "conversion/csvToJson",
-    category: "conversion",
-    description: "Parse CSV string into JSON array of objects",
-    parameters: [
-      {
-        name: "input",
-        type: "string",
-        description: "CSV string to parse into JSON array",
-        required: true,
-      },
-    ],
-    returns: "array of objects",
-    examples: [
-      {
-        description: "Parse simple CSV",
-        input: { input: "name,age\\nAlice,30\\nBob,25" },
-        output: [
-          { name: "Alice", age: "30" },
-          { name: "Bob", age: "25" },
-        ],
-      },
-    ],
-    tags: ["conversion", "csv", "json", "parse"],
-    performance: "< 5ms",
-  });
-
-  // Date utilities
-  registerFunction({
-    name: "dates/parseDate",
-    category: "dates",
-    subcategory: "parsing",
-    description: "Parse date string to ISO 8601 format",
-    parameters: [
-      {
-        name: "input",
-        type: "string",
-        description: "Date string to parse",
-        required: true,
-      },
-      {
-        name: "format",
-        type: "string",
-        description: "Optional format pattern for parsing",
-        required: false,
-      },
-    ],
-    returns: "ISO 8601 date string",
-    examples: [
-      {
-        description: "Parse standard date",
-        input: { input: "2025-12-11" },
-        output: "2025-12-11T00:00:00.000Z",
-      },
-    ],
-    tags: ["date", "parse", "iso", "format"],
-    performance: "< 2ms",
-  });
-
-  registerFunction({
-    name: "dates/formatDate",
-    category: "dates",
-    subcategory: "formatting",
-    description: "Format ISO date string with custom pattern",
-    parameters: [
-      {
-        name: "isoDate",
-        type: "string",
-        description: "ISO date string to format",
-        required: true,
-      },
-      {
-        name: "format",
-        type: "string",
-        description: "Format pattern (e.g., 'yyyy-MM-dd', 'MMMM d, yyyy')",
-        required: true,
-      },
-    ],
-    returns: "formatted date string",
-    examples: [
-      {
-        description: "Format as US date",
-        input: { isoDate: "2025-12-11T00:00:00.000Z", format: "MMMM d, yyyy" },
-        output: "December 11, 2025",
-      },
-    ],
-    tags: ["date", "format", "display"],
-    performance: "< 2ms",
-  });
-
-  registerFunction({
-    name: "dates/addDays",
-    category: "dates",
-    subcategory: "arithmetic",
-    description: "Add or subtract days from ISO date",
-    parameters: [
-      {
-        name: "isoDate",
-        type: "string",
-        description: "ISO date string",
-        required: true,
-      },
-      {
-        name: "days",
-        type: "number",
-        description: "Number of days to add (negative to subtract)",
-        required: true,
-      },
-    ],
-    returns: "ISO date string with days added",
-    examples: [
-      {
-        description: "Add 7 days",
-        input: { isoDate: "2025-12-11T00:00:00.000Z", days: 7 },
-        output: "2025-12-18T00:00:00.000Z",
-      },
-    ],
-    tags: ["date", "add", "subtract", "arithmetic"],
-    performance: "< 2ms",
-  });
-
-  // Math utilities
-  registerFunction({
-    name: "math/round",
-    category: "math",
-    description: "Round number to specified decimal places",
-    parameters: [
-      {
-        name: "value",
-        type: "number",
-        description: "Number to round",
-        required: true,
-      },
-      {
-        name: "decimals",
-        type: "number",
-        description: "Number of decimal places",
-        required: true,
-      },
-    ],
-    returns: "rounded number",
-    examples: [
-      {
-        description: "Round to 2 decimals",
-        input: { value: 3.14159, decimals: 2 },
-        output: 3.14,
-      },
-      {
-        description: "Round to integer",
-        input: { value: 3.7, decimals: 0 },
-        output: 4,
-      },
-    ],
-    tags: ["math", "round", "decimal", "precision"],
-    performance: "< 1ms",
-  });
-
-  registerFunction({
-    name: "math/clamp",
-    category: "math",
-    description: "Clamp number between minimum and maximum values",
-    parameters: [
-      {
-        name: "value",
-        type: "number",
-        description: "Number to clamp",
-        required: true,
-      },
-      {
-        name: "min",
-        type: "number",
-        description: "Minimum value",
-        required: true,
-      },
-      {
-        name: "max",
-        type: "number",
-        description: "Maximum value",
-        required: true,
-      },
-    ],
-    returns: "clamped number",
-    examples: [
-      {
-        description: "Clamp value above max",
-        input: { value: 100, min: 0, max: 50 },
-        output: 50,
-      },
-      {
-        description: "Clamp value below min",
-        input: { value: -10, min: 0, max: 100 },
-        output: 0,
-      },
-    ],
-    tags: ["math", "clamp", "limit", "constrain"],
-    performance: "< 1ms",
-  });
-
-  // Data utilities
-  registerFunction({
-    name: "data/arrays/unique",
-    category: "data",
-    subcategory: "arrays",
-    description: "Get unique values from array",
-    parameters: [
-      {
-        name: "array",
-        type: "array",
-        description: "Array to get unique values from",
-        required: true,
-      },
-    ],
-    returns: "array of unique values",
-    examples: [
-      {
-        description: "Remove duplicates",
-        input: { array: [1, 2, 2, 3, 3, 3] },
-        output: [1, 2, 3],
-      },
-    ],
-    tags: ["data", "array", "unique", "dedupe"],
-    performance: "< 2ms",
-  });
-
-  registerFunction({
-    name: "data/arrays/sortBy",
-    category: "data",
-    subcategory: "arrays",
-    description: "Sort array of objects by key",
-    parameters: [
-      {
-        name: "array",
-        type: "array",
-        description: "Array of objects to sort",
-        required: true,
-      },
-      {
-        name: "key",
-        type: "string",
-        description: "Key to sort by",
-        required: true,
-      },
-      {
-        name: "direction",
-        type: "string",
-        description: "Sort direction: 'asc' or 'desc'",
-        required: false,
-        default: "asc",
-      },
-    ],
-    returns: "sorted array",
-    examples: [
-      {
-        description: "Sort by age ascending",
-        input: {
-          array: [
-            { name: "Bob", age: 25 },
-            { name: "Alice", age: 30 },
-          ],
-          key: "age",
-        },
-        output: [
-          { name: "Bob", age: 25 },
-          { name: "Alice", age: 30 },
-        ],
-      },
-    ],
-    tags: ["data", "array", "sort", "order"],
-    performance: "< 5ms",
-  });
-
-  // Encoding utilities
-  registerFunction({
-    name: "encoding/base64Encode",
-    category: "encoding",
-    description: "Encode string to base64",
-    parameters: [
-      {
-        name: "input",
-        type: "string",
-        description: "String to encode to base64",
-        required: true,
-      },
-    ],
-    returns: "base64 encoded string",
-    examples: [
-      {
-        description: "Encode simple string",
-        input: { input: "Hello World" },
-        output: "SGVsbG8gV29ybGQ=",
-      },
-    ],
-    tags: ["encoding", "base64", "encode"],
-    performance: "< 1ms",
-  });
-
-  registerFunction({
-    name: "encoding/base64Decode",
-    category: "encoding",
-    description: "Decode base64 string",
-    parameters: [
-      {
-        name: "input",
-        type: "string",
-        description: "Base64 string to decode",
-        required: true,
-      },
-    ],
-    returns: "decoded string",
-    examples: [
-      {
-        description: "Decode base64 string",
-        input: { input: "SGVsbG8gV29ybGQ=" },
-        output: "Hello World",
-      },
-    ],
-    tags: ["encoding", "base64", "decode"],
-    performance: "< 1ms",
-  });
+  for (const e of dispatchEntries) {
+    const extras = EXTRAS[e.name];
+    const { category, subcategory } = splitName(e.name);
+    registerFunction({
+      name: e.name,
+      category,
+      subcategory: extras?.subcategory ?? subcategory,
+      description: e.description,
+      parameters: deriveParameters(e.schema),
+      returns: extras?.returns ?? "",
+      examples: extras?.examples ?? [],
+      tags: extras?.tags ?? [category],
+      performance: extras?.performance ?? "< 1ms",
+    });
+  }
 }

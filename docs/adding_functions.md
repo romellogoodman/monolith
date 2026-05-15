@@ -58,56 +58,7 @@ export const toSnakeCaseSchema = z.object({
 
 Export it so it can be imported by the server.
 
-### Step 3: Register Function Metadata
-
-**File:** [src/registry/functions.ts](../src/registry/functions.ts)
-
-Add to `registerAllFunctions()`:
-
-```typescript
-registerFunction({
-  name: "strings/toSnakeCase",
-  category: "strings",
-  subcategory: "case",
-  description: "Convert string to snake_case format",
-  parameters: [
-    {
-      name: "input",
-      type: "string",
-      description: "String to convert to snake_case",
-      required: true,
-    },
-  ],
-  returns: "string in snake_case format",
-  examples: [
-    {
-      description: "Convert camelCase string",
-      input: { input: "helloWorld" },
-      output: "hello_world",
-    },
-    {
-      description: "Convert spaced string",
-      input: { input: "Hello World" },
-      output: "hello_world",
-    },
-  ],
-  tags: ["string", "case", "snakeCase", "transform"],
-  performance: "< 1ms",
-});
-```
-
-**Metadata Fields:**
-- `name` - Full namespaced name
-- `category` - Primary category (used for filtering)
-- `subcategory` - Optional sub-grouping
-- `description` - Brief one-line description
-- `parameters` - Array of parameter info
-- `returns` - Return type description
-- `examples` - Usage examples (input/output pairs)
-- `tags` - Searchable keywords
-- `performance` - Expected execution time
-
-### Step 4: Add to the dispatch table
+### Step 3: Add to the dispatch table
 
 **File:** [src/registry/dispatch.ts](../src/registry/dispatch.ts)
 
@@ -123,6 +74,25 @@ entry(
 ```
 
 Import the schema and function at the top of `dispatch.ts` if the namespace isn't already imported.
+
+### Step 4: Add discovery extras
+
+**File:** [src/registry/functions.ts](../src/registry/functions.ts)
+
+Name, description, category/subcategory, and parameter info are **derived from the dispatch entry and Zod schema** — you don't repeat them. Add one `EXTRAS` entry for what *can't* be derived: examples, tags, a human-readable return description, and (optionally) a subcategory override.
+
+```typescript
+"strings/toSnakeCase": {
+  subcategory: "case",   // name path `strings/toSnakeCase` has no middle segment
+  returns: "string in snake_case format",
+  tags: ["string", "case", "snakeCase", "transform"],
+  examples: [
+    { description: "camelCase", input: { input: "helloWorld" }, output: "hello_world" },
+  ],
+},
+```
+
+If the function name has a middle path segment (e.g. `data/arrays/groupBy`), the subcategory (`arrays`) is derived automatically and you can omit `subcategory`.
 
 ### Step 5: Write Tests
 
@@ -185,8 +155,8 @@ For a completely new category (e.g., `crypto` for cryptographic functions):
 1. **Create directory:** `src/utils/crypto/`
 2. **Create schema file:** `src/schemas/crypto.ts`
 3. **Implement functions:** Following response format pattern
-4. **Register metadata:** Add all functions in `src/registry/functions.ts`
-5. **Wire up dispatch:** Add entries to `src/registry/dispatch.ts` (import schema/util namespaces as needed)
+4. **Wire up dispatch:** Add entries to `src/registry/dispatch.ts` (import schema/util namespaces as needed)
+5. **Add discovery extras:** Examples/tags/returns in `src/registry/functions.ts`
 6. **Create tests:** `tests/unit/utils/crypto.test.ts`
 
 ## Common Patterns
@@ -240,8 +210,8 @@ try {
 
 - [ ] Utility function implemented in `src/utils/`
 - [ ] Zod schema defined in `src/schemas/`
-- [ ] Function metadata registered in `src/registry/functions.ts`
 - [ ] Dispatch entry added to `src/registry/dispatch.ts`
+- [ ] Discovery extras (examples/tags/returns) added in `src/registry/functions.ts`
 - [ ] Unit tests written and passing
 - [ ] Verified via CLI (`monolith <new-function> ...`) and MCP
 - [ ] TypeScript compiles without errors

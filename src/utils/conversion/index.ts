@@ -3,6 +3,9 @@
  */
 
 import Papa from "papaparse";
+import yaml from "js-yaml";
+import { XMLParser } from "fast-xml-parser";
+import { marked } from "marked";
 import { successResponse, errorResponse, type UtilityResponse } from "../../types/index.js";
 
 /**
@@ -56,6 +59,77 @@ export function csvToJson(input: string): UtilityResponse<Array<Record<string, u
     return errorResponse(
       error instanceof Error ? error.message : "Failed to parse CSV",
       "PARSE_ERROR"
+    );
+  }
+}
+
+/**
+ * Parse a YAML string into a JSON value.
+ */
+export function yamlToJson(input: string): UtilityResponse<unknown> {
+  try {
+    // js-yaml v4's `load()` is safe by default (unlike PyYAML's `yaml.load`).
+    // JSON_SCHEMA is the most restrictive schema: only JSON-compatible types,
+    // no custom tags, no !!js/function, no arbitrary constructors.
+    const result = yaml.load(input, { schema: yaml.JSON_SCHEMA });
+    return successResponse(result ?? null, { inputType: "string", outputType: "json" });
+  } catch (error) {
+    return errorResponse(
+      error instanceof Error ? error.message : "Failed to parse YAML",
+      "PARSE_ERROR"
+    );
+  }
+}
+
+/**
+ * Serialize a JSON value to a YAML string.
+ */
+export function jsonToYaml(input: unknown): UtilityResponse<string> {
+  try {
+    const result = yaml.dump(input, { schema: yaml.JSON_SCHEMA, sortKeys: true, lineWidth: -1 });
+    return successResponse(result, { inputType: "json", outputType: "string" });
+  } catch (error) {
+    return errorResponse(
+      error instanceof Error ? error.message : "Failed to serialize YAML",
+      "CONVERSION_ERROR"
+    );
+  }
+}
+
+/**
+ * Parse an XML string into a JSON object.
+ */
+export function xmlToJson(input: string): UtilityResponse<Record<string, unknown>> {
+  try {
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: "@",
+      parseTagValue: true,
+      trimValues: true,
+    });
+    const result = parser.parse(input) as Record<string, unknown>;
+    return successResponse(result, { inputType: "string", outputType: "object" });
+  } catch (error) {
+    return errorResponse(
+      error instanceof Error ? error.message : "Failed to parse XML",
+      "PARSE_ERROR"
+    );
+  }
+}
+
+/**
+ * Render Markdown to HTML.
+ */
+export function markdownToHtml(input: string): UtilityResponse<string> {
+  try {
+    // `async: false` guarantees a string return (no Promise) so the CLI and MCP
+    // surfaces stay synchronous.
+    const result = marked.parse(input, { async: false, gfm: true }) as string;
+    return successResponse(result, { inputType: "string", outputType: "string" });
+  } catch (error) {
+    return errorResponse(
+      error instanceof Error ? error.message : "Failed to render markdown",
+      "CONVERSION_ERROR"
     );
   }
 }
