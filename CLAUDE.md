@@ -55,6 +55,10 @@ Quick path:
 - **Performance:** target <10ms. No I/O, network, or external state.
 - **CLI output rules:** scalars raw on stdout; objects/arrays as JSON; `--json` opts into full envelope; `--raw` for line-oriented output; `-q`/`--quiet` silences stdout and drives exit code from boolean results; errors on stderr; exit `0`/`1` (usage, or `--quiet` false)/`2` (execution).
 
+## Subprojects
+
+- `website/` — landing page (Vite + React + p5.js, see [website/CLAUDE.md](website/CLAUDE.md)). Separate npm project; the root `.gitignore` has explicit `!website/**/*.js` exceptions so its JS configs and lockfile stay tracked despite the parent being TypeScript.
+
 ## Additional Documentation
 
 - [Architecture](docs/architecture.md) — dispatch table, registry, data flow
