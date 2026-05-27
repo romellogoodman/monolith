@@ -1,32 +1,24 @@
-# Prototype Boilerplate
+# Monolith Landing Page
 
-A minimal React boilerplate for rapid prototyping with Claude Code.
-
-React 19 + Vite + SCSS with BEM conventions.
+Live ASCII-textured rotating cube. Vite + React + p5.js.
 
 ## Quick Start
 
 ```bash
 npm install
-npm run dev
+npm run dev          # http://localhost:8080
 ```
 
-## Available Scripts
+## How it works
+
+A hidden p5 WEBGL graphics buffer renders a morphing 3D cube at character-grid resolution; the visible 2D canvas reads back those pixels and draws one colored monospace character per cell, picked from Paul Bourke's 70-step luminance ramp. See [CLAUDE.md](CLAUDE.md) for the full breakdown — including the StrictMode workaround that keeps the cube from rendering twice.
+
+## Scripts
 
 ```bash
-npm run dev          # Start dev server (port 8080)
-npm run build        # Build for production
-npm run lint         # Check for errors
-npm run lint:fix     # Fix linting errors
-npm run format       # Format code with Prettier
-npm run preview      # Preview production build
-npm run clean        # Remove build artifacts
+npm run dev          # Dev server (port 8080)
+npm run build        # Production build
+npm run preview      # Preview the production build
+npm run lint         # ESLint
+npm run format       # Prettier
 ```
-
-## Environment Variables
-
-Copy `.env.example` to `.env.local` and configure as needed. All variables must be prefixed with `VITE_`.
-
-## Project Guidelines
-
-See [CLAUDE.md](CLAUDE.md) for file structure conventions, CSS/SCSS guidelines, and other project-specific instructions.
