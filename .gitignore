@@ -38,3 +38,7 @@ yarn-error.log*
 # Temporary files
 *.tmp
 .cache/
+
+# Website subproject is JS (Vite/React) — opt back in to the patterns ignored above
+!website/**/*.js
+!website/package-lock.json
