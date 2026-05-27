@@ -97,20 +97,20 @@ function App() {
       <footer className="app__footer">
         <a
           className="app__footer-text"
-          href="https://github.com/romellogoodman/monolith"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Monolith
-        </a>
-        <span className="app__footer-text">|</span>
-        <a
-          className="app__footer-text"
           href="https://romellogoodman.com/"
           target="_blank"
           rel="noopener noreferrer"
         >
           Romello Goodman
+        </a>
+        <span className="app__footer-text">|</span>
+        <a
+          className="app__footer-text"
+          href="https://github.com/romellogoodman/monolith"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open the Monolith
         </a>
       </footer>
     </div>
