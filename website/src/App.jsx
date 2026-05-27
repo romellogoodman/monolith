@@ -2,10 +2,11 @@ import { useEffect, useRef } from "react";
 import p5 from "p5";
 import "./App.scss";
 
-const CHARS = " .:-=+*#%@";
-const CELL_W = 10;
-const CELL_H = 16;
-const FONT_SIZE = 16;
+const CHARS =
+  " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
+const CELL_W = 6;
+const CELL_H = 10;
+const FONT_SIZE = 11;
 
 function App() {
   const containerRef = useRef(null);
@@ -67,11 +68,11 @@ function App() {
             const r = px[i];
             const g = px[i + 1];
             const b = px[i + 2];
-            const bright = (r + g + b) / 3;
-            if (bright < 25) continue;
+            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+            if (lum < 20) continue;
             const ci = Math.min(
               CHARS.length - 1,
-              Math.floor((bright / 255) * CHARS.length),
+              Math.floor((lum / 255) * CHARS.length),
             );
             p.fill(r, g, b);
             p.text(CHARS[ci], x * CELL_W, y * CELL_H);
@@ -96,20 +97,20 @@ function App() {
       <footer className="app__footer">
         <a
           className="app__footer-text"
-          href="https://romellogoodman.com/"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Romello Goodman
-        </a>
-        <span className="app__footer-text">|</span>
-        <a
-          className="app__footer-text"
           href="https://github.com/romellogoodman/monolith"
           target="_blank"
           rel="noopener noreferrer"
         >
           Monolith
+        </a>
+        <span className="app__footer-text">|</span>
+        <a
+          className="app__footer-text"
+          href="https://romellogoodman.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Romello Goodman
         </a>
       </footer>
     </div>
