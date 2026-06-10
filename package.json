@@ -1,7 +1,7 @@
 {
   "name": "monolith",
   "version": "1.0.0",
-  "description": "Deterministic Utility MCP Server - A Model Context Protocol server providing thousands of tested utility functions for AI agents",
+  "description": "Deterministic Utility MCP Server - A Model Context Protocol server providing 42 tested utility functions for AI agents",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
