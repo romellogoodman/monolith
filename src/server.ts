@@ -44,6 +44,16 @@ export function createServer() {
 
   registerAllFunctions();
 
+  // The dispatch table is static, so the JSON Schema for each function never
+  // changes after startup. Compute it once instead of on every tools/list.
+  const dispatchTools = dispatchEntries.map((e) => ({
+    name: e.name,
+    description: e.description,
+    // MCP expects JSON Schema, not raw Zod shapes. `io: "input"` so
+    // fields with defaults aren't reported as required to the caller.
+    inputSchema: z.toJSONSchema(e.schema, { io: "input" }),
+  }));
+
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
@@ -89,13 +99,7 @@ export function createServer() {
             required: ["name"],
           },
         },
-        ...dispatchEntries.map((e) => ({
-          name: e.name,
-          description: e.description,
-          // MCP expects JSON Schema, not raw Zod shapes. `io: "input"` so
-          // fields with defaults aren't reported as required to the caller.
-          inputSchema: z.toJSONSchema(e.schema, { io: "input" }),
-        })),
+        ...dispatchTools,
       ],
     };
   });
