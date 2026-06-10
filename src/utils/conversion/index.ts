@@ -106,7 +106,11 @@ export function xmlToJson(input: string): UtilityResponse<Record<string, unknown
       attributeNamePrefix: "@",
       parseTagValue: true,
       trimValues: true,
-      // Disable custom entity expansion to avoid entity-expansion DoS.
+      // Disable entity processing to avoid entity-expansion DoS (billion-laughs
+      // via DOCTYPE-defined entities). Note this also leaves the five predefined
+      // XML entities (&lt; &gt; &amp; &quot; &apos;) un-decoded in the output;
+      // that is an accepted trade-off for not expanding attacker-controlled
+      // entity definitions.
       processEntities: false,
     });
     const result = parser.parse(input) as Record<string, unknown>;
