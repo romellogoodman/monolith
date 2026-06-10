@@ -77,9 +77,16 @@ const HTML_UNESCAPES: Record<string, string> = {
   "&lt;": "<",
   "&gt;": ">",
   "&quot;": '"',
+  "&apos;": "'",
   "&#39;": "'",
   "&#x27;": "'",
   "&#x2F;": "/",
+  "&nbsp;": " ",
+  "&copy;": "©",
+  "&reg;": "®",
+  "&mdash;": "—",
+  "&ndash;": "–",
+  "&hellip;": "…",
 };
 
 /**
@@ -98,14 +105,29 @@ export function escapeHtml(input: string): UtilityResponse<string> {
 }
 
 /**
- * Unescape the common HTML entities (&amp;, &lt;, &gt;, &quot;, &#39;).
+ * Unescape HTML entities: named (&amp;, &lt;, &nbsp;, ...) plus generic
+ * numeric (&#65;) and hex (&#x41;) character references.
  */
 export function unescapeHtml(input: string): UtilityResponse<string> {
   try {
-    const result = input.replace(
-      /&(amp|lt|gt|quot|#39|#x27|#x2F);/g,
-      (match) => HTML_UNESCAPES[match]
-    );
+    const result = input.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (match, body: string) => {
+      if (body[0] === "#") {
+        const codePoint =
+          body[1] === "x" || body[1] === "X"
+            ? parseInt(body.slice(2), 16)
+            : parseInt(body.slice(1), 10);
+        // Reject out-of-range code points; leave the original text untouched.
+        if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+          return match;
+        }
+        try {
+          return String.fromCodePoint(codePoint);
+        } catch {
+          return match;
+        }
+      }
+      return HTML_UNESCAPES[match] ?? match;
+    });
     return successResponse(result, { inputType: "string", outputType: "string" });
   } catch (error) {
     return errorResponse(
