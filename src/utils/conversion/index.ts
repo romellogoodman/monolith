@@ -106,6 +106,8 @@ export function xmlToJson(input: string): UtilityResponse<Record<string, unknown
       attributeNamePrefix: "@",
       parseTagValue: true,
       trimValues: true,
+      // Disable custom entity expansion to avoid entity-expansion DoS.
+      processEntities: false,
     });
     const result = parser.parse(input) as Record<string, unknown>;
     return successResponse(result, { inputType: "string", outputType: "object" });
