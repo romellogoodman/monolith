@@ -26,6 +26,12 @@ export function base64Encode(input: string): UtilityResponse<string> {
  */
 export function base64Decode(input: string): UtilityResponse<string> {
   try {
+    // `Buffer.from(..., "base64")` silently drops invalid characters, so a
+    // garbage input would "succeed" with nonsense output. Validate the shape
+    // first (standard and URL-safe alphabets, optional padding).
+    if (!/^[A-Za-z0-9+/_-]*={0,2}$/.test(input) || input.replace(/=+$/, "").length % 4 === 1) {
+      return errorResponse("Input is not a valid base64 string", "DECODING_ERROR");
+    }
     return successResponse(Buffer.from(input, "base64").toString("utf-8"), STRING_META);
   } catch (error) {
     return errorResponse(

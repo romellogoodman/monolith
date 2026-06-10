@@ -25,6 +25,16 @@ describe("Encoding Utilities", () => {
     expect(ok(base64Decode(ok(base64Encode("Hello World"))))).toBe("Hello World");
   });
 
+  it("base64Decode rejects invalid characters instead of silently dropping them", () => {
+    const r = base64Decode("not valid!! base64");
+    expect(r.success).toBe(false);
+    expect((r as { success: false; errorCode: string }).errorCode).toBe("DECODING_ERROR");
+  });
+
+  it("base64Decode rejects strings of invalid length", () => {
+    expect(base64Decode("YWJjZA===").success).toBe(false);
+  });
+
   it("urlEncode percent-encodes reserved characters", () => {
     expect(ok(urlEncode("a b/c?d=1"))).toBe("a%20b%2Fc%3Fd%3D1");
   });
