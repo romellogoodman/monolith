@@ -4,6 +4,7 @@
  * stay in sync.
  */
 
+import { performance } from "node:perf_hooks";
 import type { z } from "zod";
 import type { UtilityResponse } from "../types/index.js";
 
