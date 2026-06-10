@@ -42,7 +42,17 @@ function entry<S extends z.ZodObject>(
     name,
     description,
     schema,
-    execute: (raw) => run(schema.parse(raw)),
+    execute: (raw) => {
+      const args = schema.parse(raw);
+      const start = performance.now();
+      const result = run(args);
+      const executionTime = performance.now() - start;
+      // Populate the documented `executionTime` metric (ms) on success.
+      if (result.success) {
+        result.metadata = { ...result.metadata, executionTime };
+      }
+      return result;
+    },
   };
 }
 
