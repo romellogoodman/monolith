@@ -20,7 +20,14 @@ export function truncate(
       });
     }
 
-    const truncated = input.slice(0, length - suffix.length) + suffix;
+    // When the suffix is as long as (or longer than) the target length, there
+    // is no room for any input characters; `length - suffix.length` would go
+    // negative and produce output longer than `length`. Clamp so the result is
+    // never longer than `length`.
+    const truncated =
+      suffix.length >= length
+        ? suffix.slice(0, length)
+        : input.slice(0, length - suffix.length) + suffix;
 
     return successResponse(truncated, {
       inputType: "string",
