@@ -85,6 +85,12 @@ describe("String Manipulation Utilities", () => {
     expect(ok(truncate("Hi", 10))).toBe("Hi");
   });
 
+  it("truncate never exceeds length when the suffix is longer than length", () => {
+    const r = ok(truncate("Hello World", 2));
+    expect(r.length).toBeLessThanOrEqual(2);
+    expect(r).toBe("..");
+  });
+
   it("wordCount counts words, chars, lines", () => {
     expect(ok(wordCount("hello world"))).toEqual({ words: 2, chars: 11, lines: 1 });
   });
