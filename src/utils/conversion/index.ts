@@ -119,6 +119,10 @@ export function xmlToJson(input: string): UtilityResponse<Record<string, unknown
 
 /**
  * Render Markdown to HTML.
+ *
+ * SECURITY: the output is NOT sanitized. Raw HTML embedded in the Markdown —
+ * including `<script>` tags and `on*` event handlers — passes through verbatim.
+ * Callers must sanitize the result before rendering it in any trusted context.
  */
 export function markdownToHtml(input: string): UtilityResponse<string> {
   try {
