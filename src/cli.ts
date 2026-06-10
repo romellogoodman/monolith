@@ -329,7 +329,9 @@ function describeCommand(name: string): string {
 }
 
 export async function runCli(argv: string[]): Promise<number> {
-  registerAllFunctions();
+  // Building the discovery registry runs `z.toJSONSchema` for every function.
+  // Pure execution (e.g. `strings/toCamelCase "x"`) only needs the dispatch
+  // table, so defer the registry build to the paths that actually read it.
   const parsed = parseArgv(argv);
 
   if (parsed.help && parsed.command === undefined) {
@@ -348,30 +350,35 @@ export async function runCli(argv: string[]): Promise<number> {
 
   try {
     if (parsed.command === "list") {
+      registerAllFunctions();
       process.stdout.write(listCommand(parsed.positionals[0]) + "\n");
       return 0;
     }
     if (parsed.command === "search") {
       const query = parsed.positionals[0];
       if (!query) throw new UsageError("search requires a query. Usage: monolith search <query>");
+      registerAllFunctions();
       process.stdout.write(searchCommand(query) + "\n");
       return 0;
     }
     if (parsed.command === "describe") {
       const name = parsed.positionals[0];
       if (!name) throw new UsageError("describe requires a function name. Usage: monolith describe <name>");
+      registerAllFunctions();
       process.stdout.write(describeCommand(name) + "\n");
       return 0;
     }
 
     const entry = getDispatchEntry(parsed.command);
     if (!entry) {
+      registerAllFunctions();
       const suggestions = searchFunctions(parsed.command).slice(0, 3).map((f) => f.name);
       const hint = suggestions.length > 0 ? `\nDid you mean: ${suggestions.join(", ")}?` : "\nRun 'monolith list' to see available functions.";
       throw new UsageError(`Unknown command: '${parsed.command}'${hint}`);
     }
 
     if (parsed.help) {
+      registerAllFunctions();
       process.stdout.write(functionHelp(entry));
       return 0;
     }
