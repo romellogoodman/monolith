@@ -16,6 +16,16 @@ describe("Date Utilities", () => {
     expect(ok(parseDate("2025-12-11"))).toBe("2025-12-11T00:00:00.000Z");
   });
 
+  it("parseDate rejects ambiguous non-ISO input without a format", () => {
+    const r = parseDate("3/4/2025");
+    expect(r.success).toBe(false);
+    expect((r as { success: false; errorCode: string }).errorCode).toBe("INVALID_DATE");
+  });
+
+  it("parseDate with a format is timezone-independent", () => {
+    expect(ok(parseDate("3/4/2025", "M/d/yyyy"))).toBe("2025-03-04T00:00:00.000Z");
+  });
+
   it("formatDate applies a pattern", () => {
     expect(ok(formatDate("2025-12-11T00:00:00.000Z", "yyyy"))).toBe("2025");
   });

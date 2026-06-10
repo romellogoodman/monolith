@@ -14,13 +14,42 @@ import { successResponse, errorResponse, type UtilityResponse } from "../../type
 /**
  * Parse date string to ISO format
  */
+// Accept only unambiguous ISO 8601 inputs in the no-format path. Locale forms
+// like "3/4/2025" parse differently depending on host conventions, which would
+// make this "deterministic" function host-dependent.
+const ISO_8601 =
+  /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+
 export function parseDate(input: string, formatStr?: string): UtilityResponse<string> {
   try {
     let date: Date;
 
     if (formatStr) {
-      date = parse(input, formatStr, new Date());
+      // Use a fixed UTC reference so fields absent from the format don't pick up
+      // the current date/time, then reinterpret the parsed wall-clock as UTC so
+      // the result is independent of the host timezone.
+      const local = parse(input, formatStr, new Date(0));
+      if (isNaN(local.getTime())) {
+        return errorResponse("Invalid date string", "INVALID_DATE");
+      }
+      date = new Date(
+        Date.UTC(
+          local.getFullYear(),
+          local.getMonth(),
+          local.getDate(),
+          local.getHours(),
+          local.getMinutes(),
+          local.getSeconds(),
+          local.getMilliseconds()
+        )
+      );
     } else {
+      if (!ISO_8601.test(input.trim())) {
+        return errorResponse(
+          "Input is not ISO 8601. Pass an explicit `format` for non-ISO date strings.",
+          "INVALID_DATE"
+        );
+      }
       date = new Date(input);
     }
 
