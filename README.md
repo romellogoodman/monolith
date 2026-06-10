@@ -21,38 +21,63 @@ This MCP server acts as a "standard library" for AI agents, providing:
 - `list_categories` - List all function categories
 - `describe_function` - Get detailed function documentation
 
-### Utility Functions (17 functions across 7 categories)
+### Utility Functions (42 functions across 7 categories)
 
-#### String Transformations (3 functions)
+#### String Transformations (10 functions)
 - `strings/toCamelCase` - Convert to camelCase
 - `strings/toKebabCase` - Convert to kebab-case
+- `strings/toSnakeCase` - Convert to snake_case
+- `strings/toPascalCase` - Convert to PascalCase
+- `strings/toTitleCase` - Convert to Title Case
+- `strings/slugify` - Convert to a URL slug
 - `strings/truncate` - Truncate with suffix
+- `strings/wordCount` - Count words, characters, and lines
+- `strings/escapeHtml` - Escape HTML-significant characters
+- `strings/unescapeHtml` - Unescape HTML entities
 
-#### Validation (3 functions)
+#### Validation (5 functions)
 - `validation/isEmail` - Validate email format
 - `validation/isUrl` - Validate URL format
 - `validation/isUuid` - Validate UUID format
+- `validation/isJson` - Validate JSON string
+- `validation/isIsoDate` - Validate ISO 8601 date
 
-#### Format Conversions (2 functions)
+#### Format Conversions (6 functions)
 - `conversion/jsonToCsv` - Convert JSON to CSV
 - `conversion/csvToJson` - Parse CSV to JSON
+- `conversion/yamlToJson` - Parse YAML to JSON
+- `conversion/jsonToYaml` - Serialize JSON to YAML
+- `conversion/xmlToJson` - Parse XML to JSON
+- `conversion/markdownToHtml` - Render Markdown to HTML (output is not sanitized)
 
-#### Date & Time (3 functions)
+#### Date & Time (4 functions)
 - `dates/parseDate` - Parse date to ISO format
 - `dates/formatDate` - Format date with pattern
 - `dates/addDays` - Add/subtract days
+- `dates/diffDays` - Difference in calendar days
 
-#### Math & Numbers (2 functions)
+#### Math & Numbers (3 functions)
 - `math/round` - Round to decimal places
 - `math/clamp` - Clamp between min/max
+- `math/percentage` - Compute a percentage
 
-#### Data Structures (2 functions)
+#### Data Structures (6 functions)
 - `data/arrays/unique` - Get unique values
 - `data/arrays/sortBy` - Sort by key
+- `data/arrays/groupBy` - Group by key
+- `data/arrays/flatten` - Flatten a nested array
+- `data/objects/pick` - Pick keys from an object
+- `data/objects/omit` - Omit keys from an object
 
-#### Encoding (2 functions)
+#### Encoding (8 functions)
 - `encoding/base64Encode` - Encode to base64
 - `encoding/base64Decode` - Decode from base64
+- `encoding/urlEncode` - Percent-encode a URL component
+- `encoding/urlDecode` - Decode a percent-encoded component
+- `encoding/hexEncode` - Encode to hex
+- `encoding/hexDecode` - Decode from hex
+- `encoding/hashSha256` - SHA-256 hex digest
+- `encoding/hashMd5` - MD5 hex digest
 
 ## Installation
 
