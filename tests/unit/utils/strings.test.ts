@@ -111,4 +111,16 @@ describe("String Manipulation Utilities", () => {
     const original = `<b a="1">&'</b>`;
     expect(ok(unescapeHtml(ok(escapeHtml(original))))).toBe(original);
   });
+
+  it("unescapeHtml decodes numeric and hex character references", () => {
+    expect(ok(unescapeHtml("&#65;&#x42;&#x1F600;"))).toBe("AB😀");
+  });
+
+  it("unescapeHtml decodes common named entities", () => {
+    expect(ok(unescapeHtml("a&nbsp;b&mdash;c&copy;"))).toBe("a b—c©");
+  });
+
+  it("unescapeHtml leaves unknown entities untouched", () => {
+    expect(ok(unescapeHtml("&notreal;"))).toBe("&notreal;");
+  });
 });
