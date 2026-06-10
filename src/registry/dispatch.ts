@@ -183,7 +183,7 @@ export const dispatchEntries: DispatchEntry[] = [
   ),
   entry(
     "conversion/markdownToHtml",
-    "Render Markdown to HTML",
+    "Render Markdown to HTML. Output is NOT sanitized: raw HTML in the input (including <script> and on* handlers) passes through unchanged. Do not render the result in a trusted context without sanitizing it first.",
     conversionSchemas.markdownToHtmlSchema,
     (a) => conversion.markdownToHtml(a.input)
   ),
