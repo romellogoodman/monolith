@@ -139,6 +139,21 @@ describe("CLI — output formatting", () => {
     expect(r.exit).toBe(0);
   });
 
+  it("keeps numeric-looking values as strings for string fields", async () => {
+    const r = await run(["strings/slugify", "2024", "--json"]);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.success).toBe(true);
+    expect(parsed.result).toBe("2024");
+    expect(r.exit).toBe(0);
+  });
+
+  it("still JSON-coerces values for non-string fields", async () => {
+    const r = await run(["math/clamp", "100", "--min", "0", "--max", "50", "--json"]);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.success).toBe(true);
+    expect(parsed.result).toBe(50);
+  });
+
   it("--raw emits arrays one element per line", async () => {
     const r = await run(["data/arrays/unique", "[1,2,2,3]", "--raw"]);
     expect(r.stdout).toBe("1\n2\n3\n");

@@ -107,6 +107,29 @@ function coerceValue(raw: string): unknown {
   }
 }
 
+// Returns true when the target field is (after unwrapping optional/default/
+// nullable wrappers) a plain string. String fields must NOT be JSON-coerced —
+// otherwise `slugify 2024` would pass the number 2024 instead of "2024".
+function isStringField(field: unknown): boolean {
+  let cur = field as { def?: { type?: string; innerType?: unknown } } | undefined;
+  while (cur?.def) {
+    if (cur.def.type === "string") return true;
+    if (cur.def.innerType) {
+      cur = cur.def.innerType as typeof cur;
+    } else {
+      return false;
+    }
+  }
+  return false;
+}
+
+// Coerce a CLI string against the target Zod field: plain-string fields are
+// passed through verbatim; everything else is JSON-parsed (numbers, booleans,
+// arrays, objects).
+function coerceForField(raw: string, field: unknown): unknown {
+  return isStringField(field) ? raw : coerceValue(raw);
+}
+
 function isFieldRequired(schema: DispatchEntry["schema"], key: string): boolean {
   const field = schema.shape[key];
   if (!field) return false;
@@ -137,12 +160,12 @@ async function buildArgs(entry: DispatchEntry, parsed: ParsedArgv): Promise<Reco
           `Valid flags: ${fieldNames.map((f) => "--" + camelToKebab(f)).join(", ")}`
       );
     }
-    args[key] = typeof value === "string" ? coerceValue(value) : value;
+    args[key] = typeof value === "string" ? coerceForField(value, shape[key]) : value;
   }
 
   const unfilled = fieldNames.filter((f) => !(f in args));
   for (let i = 0; i < parsed.positionals.length && i < unfilled.length; i++) {
-    args[unfilled[i]] = coerceValue(parsed.positionals[i]);
+    args[unfilled[i]] = coerceForField(parsed.positionals[i], shape[unfilled[i]]);
   }
 
   if (parsed.positionals.length > unfilled.length) {
@@ -156,7 +179,7 @@ async function buildArgs(entry: DispatchEntry, parsed: ParsedArgv): Promise<Reco
   if (firstRequired && !(firstRequired in args) && !process.stdin.isTTY) {
     const stdin = (await readStdin()).replace(/\n$/, "");
     if (stdin.length > 0) {
-      args[firstRequired] = coerceValue(stdin);
+      args[firstRequired] = coerceForField(stdin, shape[firstRequired]);
     }
   }
 
