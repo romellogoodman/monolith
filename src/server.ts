@@ -128,19 +128,31 @@ export function createServer() {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };
     } catch (error) {
+      // Validation failures carry per-field detail in `ZodError.issues`. Surface
+      // it as a structured INVALID_INPUT response so callers can self-correct
+      // instead of getting a single flattened message.
+      const payload =
+        error instanceof z.ZodError
+          ? {
+              success: false,
+              error: "Invalid input",
+              errorCode: "INVALID_INPUT",
+              issues: error.issues.map((issue) => ({
+                path: issue.path.join("."),
+                message: issue.message,
+                code: issue.code,
+              })),
+            }
+          : {
+              success: false,
+              error: error instanceof Error ? error.message : "Unknown error",
+              errorCode: "TOOL_EXECUTION_ERROR",
+            };
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify(
-              {
-                success: false,
-                error: error instanceof Error ? error.message : "Unknown error",
-                errorCode: "TOOL_EXECUTION_ERROR",
-              },
-              null,
-              2
-            ),
+            text: JSON.stringify(payload, null, 2),
           },
         ],
         isError: true,

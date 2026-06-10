@@ -86,5 +86,19 @@ describe("MCP server", () => {
       expect(parsed.success).toBe(false);
       expect(parsed.errorCode).toBe("TOOL_EXECUTION_ERROR");
     });
+
+    it("returns structured INVALID_INPUT with per-field issues on validation failure", async () => {
+      const res = await client.callTool({
+        name: "math/clamp",
+        arguments: { value: "not a number", min: 0, max: 10 },
+      });
+      expect(res.isError).toBe(true);
+      const content = res.content as Array<{ type: string; text: string }>;
+      const parsed = JSON.parse(content[0].text);
+      expect(parsed.success).toBe(false);
+      expect(parsed.errorCode).toBe("INVALID_INPUT");
+      expect(Array.isArray(parsed.issues)).toBe(true);
+      expect(parsed.issues[0].path).toBe("value");
+    });
   });
 });
