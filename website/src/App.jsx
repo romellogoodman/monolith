@@ -14,6 +14,7 @@ function App() {
   useEffect(() => {
     const container = containerRef.current;
     let instance;
+    let visibilityHandler;
 
     const sketch = (p) => {
       let gfx;
@@ -23,9 +24,22 @@ function App() {
       const setupBuffer = () => {
         cols = Math.max(1, Math.floor(p.windowWidth / CELL_W));
         rows = Math.max(1, Math.floor(p.windowHeight / CELL_H));
+        // Dispose the previous WEBGL buffer before allocating a new one;
+        // otherwise each resize leaks a GPU context.
+        gfx?.remove();
         gfx = p.createGraphics(cols, rows, p.WEBGL);
         gfx.pixelDensity(1);
         gfx.noStroke();
+      };
+
+      const handleVisibility = () => {
+        // The pixel readback + thousands of text() calls are pure waste when
+        // the tab is hidden. Pause the draw loop until it's visible again.
+        if (document.hidden) {
+          p.noLoop();
+        } else {
+          p.loop();
+        }
       };
 
       p.setup = () => {
@@ -35,6 +49,8 @@ function App() {
         p.textAlign(p.LEFT, p.TOP);
         p.noStroke();
         setupBuffer();
+        visibilityHandler = handleVisibility;
+        document.addEventListener("visibilitychange", visibilityHandler);
       };
 
       p.windowResized = () => {
@@ -87,6 +103,9 @@ function App() {
 
     return () => {
       clearTimeout(timeoutId);
+      if (visibilityHandler) {
+        document.removeEventListener("visibilitychange", visibilityHandler);
+      }
       instance?.remove();
     };
   }, []);
