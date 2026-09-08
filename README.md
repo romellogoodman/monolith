@@ -155,8 +155,9 @@ monolith strings/toCamelCase "hello" --json
 
 **Output rules:**
 - Scalars print raw (no quotes), objects/arrays as formatted JSON.
-- `--json` always emits the full envelope.
-- Errors go to stderr. Exit `0` on success, `1` on usage error, `2` on execution error.
+- `--json` always emits the full envelope on stdout, for errors too.
+- Errors go to stderr as prose. Exit `0` on success, `1` on usage or validation error, `2` on execution error.
+- Every error names its recovery: the exact command to run next, with `<field>` placeholders for values to substitute. Under `--json` these arrive as `next: [{command, when}]` alongside an `errorCode`, and validation failures include per-field `issues` in the same shape the MCP server returns.
 
 **Discovery:**
 

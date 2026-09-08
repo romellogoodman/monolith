@@ -226,6 +226,89 @@ describe("CLI — error paths", () => {
     expect(parsed.error).toBeDefined();
     expect(r.exit).toBe(2);
   });
+
+  it("utility execution error carries a help step", async () => {
+    const r = await run(["math/clamp", "5", "--min", "10", "--max", "1", "--json"]);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.errorCode).toBe("INVALID_RANGE");
+    expect(parsed.next).toEqual([
+      { command: "monolith math/clamp --help", when: expect.any(String) },
+    ]);
+    expect(r.exit).toBe(2);
+  });
+});
+
+describe("CLI — structured errors (shared with MCP)", () => {
+  it("missing required fields → INVALID_INPUT with issues and a filled-in template", async () => {
+    const r = await run(["strings/truncate", "--input", "hello world", "--json"]);
+    expect(r.stderr).toBe("");
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.success).toBe(false);
+    expect(parsed.errorCode).toBe("INVALID_INPUT");
+    expect(parsed.error).toBe("strings/truncate requires --length");
+    expect(parsed.issues).toEqual([
+      { path: "length", message: expect.any(String), code: "invalid_type" },
+    ]);
+    expect(parsed.next[0]).toEqual({
+      command: "monolith strings/truncate --input 'hello world' --length <length>",
+      when: "Substitute <length> and rerun",
+    });
+    expect(parsed.next[1].command).toBe("monolith strings/truncate --help");
+    expect(r.exit).toBe(1);
+  });
+
+  it("wrong type → names the flag and replaces the bad value with a placeholder", async () => {
+    const r = await run(["math/clamp", "abc", "--min", "0", "--max", "5", "--json"]);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.errorCode).toBe("INVALID_INPUT");
+    expect(parsed.error).toBe("--value: expected number, received string");
+    expect(parsed.next[0].command).toBe("monolith math/clamp --value <value> --min 0 --max 5");
+    expect(r.exit).toBe(1);
+  });
+
+  it("prose form prints the same message and commands to stderr", async () => {
+    const r = await run(["strings/truncate", "--input", "hello world"]);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("error: strings/truncate requires --length");
+    expect(r.stderr).toContain("Substitute <length> and rerun:");
+    expect(r.stderr).toContain("  monolith strings/truncate --input 'hello world' --length <length>");
+    expect(r.stderr).toContain("  monolith strings/truncate --help");
+    expect(r.exit).toBe(1);
+  });
+
+  it("unknown flag honors --json with UNKNOWN_FLAG and next steps", async () => {
+    const r = await run(["strings/toCamelCase", "--bogus", "x", "--json"]);
+    expect(r.stderr).toBe("");
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.errorCode).toBe("UNKNOWN_FLAG");
+    expect(parsed.error).toMatch(/--input/);
+    expect(parsed.next.at(-1).command).toBe("monolith strings/toCamelCase --help");
+    expect(r.exit).toBe(1);
+  });
+
+  it("unknown command honors --json with UNKNOWN_COMMAND and suggestions", async () => {
+    const r = await run(["strings/toCamel", "x", "--json"]);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.errorCode).toBe("UNKNOWN_COMMAND");
+    expect(parsed.next.some((s: { command: string }) => s.command === "monolith strings/toCamelCase --help")).toBe(true);
+    expect(parsed.next.at(-1)).toEqual({ command: "monolith list", when: expect.any(String) });
+    expect(r.exit).toBe(1);
+  });
+
+  it("discovery usage errors honor --json", async () => {
+    const r = await run(["search", "--json"]);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.errorCode).toBe("MISSING_ARGUMENT");
+    expect(parsed.next[0].command).toBe("monolith search <query>");
+    expect(r.exit).toBe(1);
+  });
+
+  it("--quiet --json on error writes nothing but keeps the exit code", async () => {
+    const r = await run(["strings/truncate", "--json", "--quiet"]);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toBe("");
+    expect(r.exit).toBe(1);
+  });
 });
 
 describe("CLI — discovery", () => {

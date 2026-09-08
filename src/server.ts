@@ -12,6 +12,7 @@ import { z } from "zod";
 
 import { registerAllFunctions } from "./registry/functions.js";
 import { dispatchEntries, getDispatchEntry } from "./registry/dispatch.js";
+import { validationErrorResponse } from "./types/index.js";
 
 import {
   searchFunctionsSchema,
@@ -128,21 +129,12 @@ export function createServer() {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };
     } catch (error) {
-      // Validation failures carry per-field detail in `ZodError.issues`. Surface
-      // it as a structured INVALID_INPUT response so callers can self-correct
-      // instead of getting a single flattened message.
+      // Validation failures go through the shared translator so the CLI and
+      // MCP surfaces emit an identical INVALID_INPUT envelope with per-field
+      // issues callers can self-correct from.
       const payload =
         error instanceof z.ZodError
-          ? {
-              success: false,
-              error: "Invalid input",
-              errorCode: "INVALID_INPUT",
-              issues: error.issues.map((issue) => ({
-                path: issue.path.join("."),
-                message: issue.message,
-                code: issue.code,
-              })),
-            }
+          ? validationErrorResponse(error)
           : {
               success: false,
               error: error instanceof Error ? error.message : "Unknown error",

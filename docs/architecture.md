@@ -46,6 +46,9 @@ The CLI adapter:
 1. Parses argv → `{ command, positionals, flags, json }`
 2. Looks up the entry, builds the args object from positionals/flags (stdin fills the first required field when piped)
 3. Calls `entry.execute(args)` and formats output per `--json` rules
+4. On any failure, builds an `ErrorResponse` with `errorCode` and `next` recovery steps (commands derived from the schema, with `<field>` placeholders) — prose on stderr, or the envelope on stdout under `--json`
+
+Both adapters translate Zod failures with `validationErrorResponse()` from [src/types/responses.ts](../src/types/responses.ts), so a bad argument yields the same `INVALID_INPUT` + `issues[]` shape over MCP and the CLI.
 
 ### 4. Response Format
 

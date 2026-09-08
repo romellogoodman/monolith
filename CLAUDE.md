@@ -53,7 +53,8 @@ Quick path:
 - **Response envelope:** all utilities return `UtilityResponse<T>` — use `successResponse(result, metadata?)` / `errorResponse(error, code)` from [src/types/responses.ts](src/types/responses.ts).
 - **Naming:** `category/functionName` (e.g., `strings/toCamelCase`).
 - **Performance:** target <10ms. No I/O, network, or external state.
-- **CLI output rules:** scalars raw on stdout; objects/arrays as JSON; `--json` opts into full envelope; `--raw` for line-oriented output; `-q`/`--quiet` silences stdout and drives exit code from boolean results; errors on stderr; exit `0`/`1` (usage, or `--quiet` false)/`2` (execution).
+- **CLI output rules:** scalars raw on stdout; objects/arrays as JSON; `--json` opts into full envelope; `--raw` for line-oriented output; `-q`/`--quiet` silences stdout and drives exit code from boolean results; exit `0`/`1` (usage or validation, or `--quiet` false)/`2` (execution).
+- **Errors carry their recovery:** every CLI error is an `ErrorResponse` with an `errorCode` and a `next: [{command, when}]` list of runnable commands (`<field>` marks a placeholder to substitute). Prose form goes to stderr; with `--json` the same envelope goes to stdout. Zod failures on both surfaces go through `validationErrorResponse` in [src/types/responses.ts](src/types/responses.ts) so MCP and CLI emit the identical `INVALID_INPUT` + `issues` shape.
 
 ## Subprojects
 
