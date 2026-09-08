@@ -1,355 +1,274 @@
 /**
- * Tests for the CLI adapter. Invokes runCli() directly and captures
- * writes to process.stdout / process.stderr via spies.
+ * CLI adapter tests: runCli() with stdout/stderr captured and stdin faked.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Readable } from "node:stream";
-import { runCli } from "../../src/cli.js";
+import { parseArgv, runCli } from "../../src/cli.js";
+import { functions } from "../../src/core/registry.js";
 
 interface Captured {
   stdout: string;
   stderr: string;
   exit: number;
+  json: () => Record<string, unknown>;
 }
+
+const realStdin = process.stdin;
 
 async function run(argv: string[], stdin?: string): Promise<Captured> {
-  const stdoutChunks: string[] = [];
-  const stderrChunks: string[] = [];
-
-  const outSpy = vi
-    .spyOn(process.stdout, "write")
-    .mockImplementation((chunk: string | Uint8Array) => {
-      stdoutChunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
-      return true;
-    });
-  const errSpy = vi
-    .spyOn(process.stderr, "write")
-    .mockImplementation((chunk: string | Uint8Array) => {
-      stderrChunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
-      return true;
-    });
-
-  const originalStdin = process.stdin;
-  if (stdin !== undefined) {
-    const fake = Readable.from([stdin]) as unknown as NodeJS.ReadStream;
-    (fake as unknown as { isTTY: boolean }).isTTY = false;
-    Object.defineProperty(process, "stdin", { value: fake, configurable: true });
-  } else {
-    Object.defineProperty(process, "stdin", {
-      value: Object.assign(originalStdin, { isTTY: true }),
-      configurable: true,
-    });
-  }
-
+  const out: string[] = [];
+  const err: string[] = [];
+  const toStr = (c: string | Uint8Array) => (typeof c === "string" ? c : Buffer.from(c).toString());
+  vi.spyOn(process.stdout, "write").mockImplementation(
+    (c: string | Uint8Array) => (out.push(toStr(c)), true)
+  );
+  vi.spyOn(process.stderr, "write").mockImplementation(
+    (c: string | Uint8Array) => (err.push(toStr(c)), true)
+  );
+  const fake =
+    stdin === undefined
+      ? Object.assign(new Readable({ read() {} }), { isTTY: true })
+      : Object.assign(Readable.from([stdin]), { isTTY: false });
+  Object.defineProperty(process, "stdin", { value: fake, configurable: true });
   try {
     const exit = await runCli(argv);
-    return { stdout: stdoutChunks.join(""), stderr: stderrChunks.join(""), exit };
+    const stdout = out.join("");
+    return { stdout, stderr: err.join(""), exit, json: () => JSON.parse(stdout) };
   } finally {
-    outSpy.mockRestore();
-    errSpy.mockRestore();
-    Object.defineProperty(process, "stdin", { value: originalStdin, configurable: true });
+    Object.defineProperty(process, "stdin", { value: realStdin, configurable: true });
   }
 }
 
-beforeEach(() => {
-  // ensure each test sees a non-TTY-free default unless stdin passed
-});
+afterEach(() => vi.restoreAllMocks());
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
-
-describe("CLI — utility invocation", () => {
-  it("binds positional arg to first field", async () => {
-    const r = await run(["strings/toCamelCase", "hello world"]);
-    expect(r.stdout.trim()).toBe("helloWorld");
-    expect(r.exit).toBe(0);
-  });
-
-  it("binds flag to named field", async () => {
-    const r = await run(["strings/toCamelCase", "--input", "hello world"]);
-    expect(r.stdout.trim()).toBe("helloWorld");
-    expect(r.exit).toBe(0);
-  });
-
-  it("reads first required field from stdin when piped", async () => {
-    const r = await run(["strings/toCamelCase"], "hello world");
-    expect(r.stdout.trim()).toBe("helloWorld");
-    expect(r.exit).toBe(0);
-  });
-
-  it("assigns multiple positionals to unfilled fields in declaration order", async () => {
-    const r = await run(["strings/truncate", "Hello World", "8"]);
-    expect(r.stdout.trim()).toBe("Hello...");
-    expect(r.exit).toBe(0);
-  });
-
-  it("mixes positional and flags", async () => {
-    const r = await run(["math/clamp", "100", "--min", "0", "--max", "50"]);
-    expect(r.stdout.trim()).toBe("50");
-    expect(r.exit).toBe(0);
-  });
-
-  it("translates kebab-case flags to camelCase fields", async () => {
-    const r = await run([
-      "dates/addDays",
-      "--iso-date",
-      "2026-05-08T00:00:00Z",
-      "--days",
-      "7",
+describe("argv parsing", () => {
+  it("recognizes output flags, --flag=value, and -- terminator", () => {
+    const p = parseArgv([
+      "strings/slugify",
+      "--json",
+      "-q",
+      "--input=--weird",
+      "--",
+      "--not-a-flag",
     ]);
-    expect(r.stdout.trim()).toBe("2026-05-15T00:00:00.000Z");
-    expect(r.exit).toBe(0);
-  });
-
-  it("parses JSON from flag values for array inputs", async () => {
-    const r = await run(["data/arrays/unique", "--array", "[1,2,2,3]"]);
-    expect(JSON.parse(r.stdout)).toEqual([1, 2, 3]);
-    expect(r.exit).toBe(0);
-  });
-
-  it("parses JSON from stdin for complex inputs", async () => {
-    const r = await run(["data/arrays/unique"], "[1,2,2,3]");
-    expect(JSON.parse(r.stdout)).toEqual([1, 2, 3]);
-    expect(r.exit).toBe(0);
-  });
-
-  it("passes raw CSV string from stdin to csvToJson", async () => {
-    const r = await run(["conversion/csvToJson"], "name,age\nAlice,30\n");
-    expect(JSON.parse(r.stdout)).toEqual([{ name: "Alice", age: "30" }]);
-    expect(r.exit).toBe(0);
-  });
-});
-
-describe("CLI — output formatting", () => {
-  it("emits raw scalar on stdout by default", async () => {
-    const r = await run(["validation/isEmail", "a@b.com"]);
-    expect(r.stdout.trim()).toBe("true");
-    expect(r.stderr).toBe("");
-    expect(r.exit).toBe(0);
-  });
-
-  it("--json emits the full envelope", async () => {
-    const r = await run(["strings/toCamelCase", "hello", "--json"]);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.success).toBe(true);
-    expect(parsed.result).toBe("hello");
-    expect(parsed.metadata).toBeDefined();
-    expect(r.exit).toBe(0);
-  });
-
-  it("keeps numeric-looking values as strings for string fields", async () => {
-    const r = await run(["strings/slugify", "2024", "--json"]);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.success).toBe(true);
-    expect(parsed.result).toBe("2024");
-    expect(r.exit).toBe(0);
-  });
-
-  it("still JSON-coerces values for non-string fields", async () => {
-    const r = await run(["math/clamp", "100", "--min", "0", "--max", "50", "--json"]);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.success).toBe(true);
-    expect(parsed.result).toBe(50);
-  });
-
-  it("--raw emits arrays one element per line", async () => {
-    const r = await run(["data/arrays/unique", "[1,2,2,3]", "--raw"]);
-    expect(r.stdout).toBe("1\n2\n3\n");
-    expect(r.exit).toBe(0);
-  });
-
-  it("--raw emits objects as key=value lines", async () => {
-    const r = await run(["strings/wordCount", "hello world", "--raw"]);
-    expect(r.stdout).toBe("words=2\nchars=11\nlines=1\n");
-    expect(r.exit).toBe(0);
-  });
-
-  it("--raw is a no-op for scalar results", async () => {
-    const r = await run(["strings/toCamelCase", "hello world", "--raw"]);
-    expect(r.stdout.trim()).toBe("helloWorld");
-    expect(r.exit).toBe(0);
-  });
-
-  it("--quiet suppresses stdout and exits 0 for true boolean", async () => {
-    const r = await run(["validation/isEmail", "a@b.com", "--quiet"]);
-    expect(r.stdout).toBe("");
-    expect(r.exit).toBe(0);
-  });
-
-  it("--quiet exits 1 for false boolean", async () => {
-    const r = await run(["validation/isEmail", "nope", "-q"]);
-    expect(r.stdout).toBe("");
-    expect(r.exit).toBe(1);
-  });
-
-  it("--quiet suppresses stdout but exits 0 for non-boolean success", async () => {
-    const r = await run(["strings/toCamelCase", "hello", "-q"]);
-    expect(r.stdout).toBe("");
-    expect(r.exit).toBe(0);
-  });
-
-  it("--quiet preserves exit 2 for execution errors", async () => {
-    const r = await run(["dates/parseDate", "not a date", "-q"]);
-    expect(r.stdout).toBe("");
-    expect(r.stderr).toMatch(/error:/);
-    expect(r.exit).toBe(2);
-  });
-});
-
-describe("CLI — error paths", () => {
-  it("utility execution error → stderr + exit 2", async () => {
-    const r = await run(["dates/parseDate", "not a date"]);
-    expect(r.stderr).toMatch(/error:/);
-    expect(r.stdout).toBe("");
-    expect(r.exit).toBe(2);
-  });
-
-  it("unknown command → suggestions + exit 1", async () => {
-    const r = await run(["strings/notARealThing", "x"]);
-    expect(r.stderr).toMatch(/Unknown command/);
-    expect(r.exit).toBe(1);
-  });
-
-  it("unknown flag → exit 1 and enumerates valid flags", async () => {
-    const r = await run(["strings/toCamelCase", "--bogus", "x"]);
-    expect(r.stderr).toMatch(/Unknown flag/);
-    expect(r.stderr).toMatch(/--input/);
-    expect(r.exit).toBe(1);
-  });
-
-  it("--json on error still emits envelope and exits 2", async () => {
-    const r = await run(["dates/parseDate", "not a date", "--json"]);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.success).toBe(false);
-    expect(parsed.error).toBeDefined();
-    expect(r.exit).toBe(2);
-  });
-
-  it("utility execution error carries a help step", async () => {
-    const r = await run(["math/clamp", "5", "--min", "10", "--max", "1", "--json"]);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.errorCode).toBe("INVALID_RANGE");
-    expect(parsed.next).toEqual([
-      { command: "monolith math/clamp --help", when: expect.any(String) },
-    ]);
-    expect(r.exit).toBe(2);
-  });
-});
-
-describe("CLI — structured errors (shared with MCP)", () => {
-  it("missing required fields → INVALID_INPUT with issues and a filled-in template", async () => {
-    const r = await run(["strings/truncate", "--input", "hello world", "--json"]);
-    expect(r.stderr).toBe("");
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.success).toBe(false);
-    expect(parsed.errorCode).toBe("INVALID_INPUT");
-    expect(parsed.error).toBe("strings/truncate requires --length");
-    expect(parsed.issues).toEqual([
-      { path: "length", message: expect.any(String), code: "invalid_type" },
-    ]);
-    expect(parsed.next[0]).toEqual({
-      command: "monolith strings/truncate --input 'hello world' --length <length>",
-      when: "Substitute <length> and rerun",
+    expect(p).toMatchObject({
+      command: "strings/slugify",
+      json: true,
+      quiet: true,
+      flags: { input: "--weird" },
+      positionals: ["--not-a-flag"],
     });
-    expect(parsed.next[1].command).toBe("monolith strings/truncate --help");
-    expect(r.exit).toBe(1);
   });
 
-  it("wrong type → names the flag and replaces the bad value with a placeholder", async () => {
-    const r = await run(["math/clamp", "abc", "--min", "0", "--max", "5", "--json"]);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.errorCode).toBe("INVALID_INPUT");
-    expect(parsed.error).toBe("--value: expected number, received string");
-    expect(parsed.next[0].command).toBe("monolith math/clamp --value <value> --min 0 --max 5");
-    expect(r.exit).toBe(1);
+  it("takes negative numbers as flag values and marks bare flags", () => {
+    const p = parseArgv(["dates/addDays", "--days", "-7", "--iso-date", "--json"]);
+    expect(p.flags).toEqual({ days: "-7", isoDate: true });
+    expect(p.json).toBe(true);
+  });
+});
+
+describe("function invocation", () => {
+  it("binds positional to the first field", async () => {
+    const r = await run(["strings/toCamelCase", "hello world"]);
+    expect(r).toMatchObject({ stdout: "helloWorld\n", exit: 0 });
   });
 
-  it("prose form prints the same message and commands to stderr", async () => {
-    const r = await run(["strings/truncate", "--input", "hello world"]);
+  it("binds --flags with kebab-case names", async () => {
+    const r = await run(["dates/addDays", "--iso-date", "2026-01-01", "--days", "-1"]);
+    expect(r.stdout.trim()).toBe("2025-12-31T00:00:00.000Z");
+  });
+
+  it("reads the first required field from piped stdin, positionals fill the rest", async () => {
+    expect((await run(["strings/toCamelCase"], "hello world\n")).stdout.trim()).toBe("helloWorld");
+    const r = await run(["strings/truncate", "5"], "Hello World");
+    expect(r).toMatchObject({ stdout: "He...\n", exit: 0 });
+  });
+
+  it("rejects a positional when stdin already filled the only field", async () => {
+    const r = await run(["strings/toCamelCase", "given", "--json"], "piped");
+    expect(r.exit).toBe(1);
+    expect(r.json().errorCode).toBe("TOO_MANY_ARGUMENTS");
+  });
+
+  it("does not JSON-coerce string fields but does coerce others", async () => {
+    expect((await run(["strings/slugify", "2024"])).stdout.trim()).toBe("2024");
+    expect((await run(["data/arrays/unique", "[1,1,2]", "--raw"])).stdout).toBe("1\n2\n");
+  });
+
+  it("accepts a full argument object via --args", async () => {
+    const r = await run(["math/clamp", "--args", '{"value": 9, "min": 0, "max": 5}']);
+    expect(r.stdout.trim()).toBe("5");
+    const bad = await run(["math/clamp", "--args", "nope", "--json"]);
+    expect(bad.json().errorCode).toBe("INVALID_ARGS_JSON");
+  });
+
+  it("accepts values starting with -- via = or --", async () => {
+    expect((await run(["strings/slugify", "--input=--weird"])).stdout.trim()).toBe("weird");
+    expect((await run(["strings/slugify", "--", "--weird"])).stdout.trim()).toBe("weird");
+  });
+
+  it("errors when a non-boolean flag has no value", async () => {
+    const r = await run(["strings/slugify", "--input", "--json"]);
+    expect(r.exit).toBe(1);
+    expect(r.json()).toMatchObject({ errorCode: "MISSING_VALUE" });
+  });
+
+  it("emits the full envelope with --json", async () => {
+    const r = await run(["strings/wordCount", "a b", "--json"]);
+    expect(r.json()).toEqual({ success: true, result: { words: 2, chars: 3, lines: 1 } });
+  });
+
+  it("renders objects as key=value lines with --raw", async () => {
+    const r = await run(["strings/wordCount", "a b", "--raw"]);
+    expect(r.stdout).toBe("words=2\nchars=3\nlines=1\n");
+  });
+
+  it("drives the exit code from booleans under --quiet, with or without --json", async () => {
+    expect(await run(["validation/isEmail", "x@y.com", "-q"])).toMatchObject({
+      stdout: "",
+      exit: 0,
+    });
+    expect(await run(["validation/isEmail", "nope", "-q"])).toMatchObject({ stdout: "", exit: 1 });
+    expect(await run(["validation/isEmail", "nope", "-q", "--json"])).toMatchObject({
+      stdout: "",
+      exit: 1,
+    });
+  });
+});
+
+describe("errors", () => {
+  it("names missing flags and offers a runnable command", async () => {
+    const r = await run(["strings/truncate", "hello", "--json"]);
+    const e = r.json() as {
+      errorCode: string;
+      error: string;
+      issues: unknown[];
+      next: Array<{ command: string }>;
+    };
+    expect(r.exit).toBe(1);
+    expect(e.errorCode).toBe("INVALID_INPUT");
+    expect(e.error).toContain("requires --length");
+    expect(e.issues.length).toBeGreaterThan(0);
+    expect(e.next[0].command).toBe("monolith strings/truncate --input hello --length <length>");
+  });
+
+  it("prints prose errors to stderr without --json", async () => {
+    const r = await run(["strings/truncate", "hello"]);
     expect(r.stdout).toBe("");
     expect(r.stderr).toContain("error: strings/truncate requires --length");
-    expect(r.stderr).toContain("Substitute <length> and rerun:");
-    expect(r.stderr).toContain("  monolith strings/truncate --input 'hello world' --length <length>");
-    expect(r.stderr).toContain("  monolith strings/truncate --help");
-    expect(r.exit).toBe(1);
+    expect(r.stderr).toContain("monolith strings/truncate --help");
   });
 
-  it("unknown flag honors --json with UNKNOWN_FLAG and next steps", async () => {
-    const r = await run(["strings/toCamelCase", "--bogus", "x", "--json"]);
-    expect(r.stderr).toBe("");
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.errorCode).toBe("UNKNOWN_FLAG");
-    expect(parsed.error).toMatch(/--input/);
-    expect(parsed.next.at(-1).command).toBe("monolith strings/toCamelCase --help");
-    expect(r.exit).toBe(1);
+  it("rejects unknown flags listing the valid ones", async () => {
+    const r = await run(["strings/slugify", "x", "--nope", "1", "--json"]);
+    expect(r.json()).toMatchObject({ errorCode: "UNKNOWN_FLAG" });
+    expect((r.json() as { error: string }).error).toContain("--input");
   });
 
-  it("unknown command honors --json with UNKNOWN_COMMAND and suggestions", async () => {
-    const r = await run(["strings/toCamel", "x", "--json"]);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.errorCode).toBe("UNKNOWN_COMMAND");
-    expect(parsed.next.some((s: { command: string }) => s.command === "monolith strings/toCamelCase --help")).toBe(true);
-    expect(parsed.next.at(-1)).toEqual({ command: "monolith list", when: expect.any(String) });
-    expect(r.exit).toBe(1);
+  it("exits 2 when the function rejects the input", async () => {
+    const r = await run(["math/clamp", "1", "--min", "5", "--max", "1", "--json"]);
+    expect(r.exit).toBe(2);
+    expect(r.json()).toMatchObject({ errorCode: "INVALID_RANGE" });
   });
 
-  it("discovery usage errors honor --json", async () => {
-    const r = await run(["search", "--json"]);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.errorCode).toBe("MISSING_ARGUMENT");
-    expect(parsed.next[0].command).toBe("monolith search <query>");
+  it("suggests close names for unknown functions", async () => {
+    const r = await run(["strings/slugfy", "x", "--json"]);
     expect(r.exit).toBe(1);
-  });
-
-  it("--quiet --json on error writes nothing but keeps the exit code", async () => {
-    const r = await run(["strings/truncate", "--json", "--quiet"]);
-    expect(r.stdout).toBe("");
-    expect(r.stderr).toBe("");
-    expect(r.exit).toBe(1);
+    const e = r.json() as { errorCode: string; error: string; next: Array<{ command: string }> };
+    expect(e.errorCode).toBe("UNKNOWN_FUNCTION");
+    expect(e.error).toContain("strings/slugify");
+    expect(e.next[0].command).toBe("monolith strings/slugify --help");
   });
 });
 
-describe("CLI — discovery", () => {
-  it("list shows categories", async () => {
-    const r = await run(["list"]);
-    expect(r.stdout).toMatch(/Categories:/);
-    expect(r.stdout).toMatch(/strings/);
-    expect(r.exit).toBe(0);
+describe("discovery commands", () => {
+  it("--version and --help", async () => {
+    expect((await run(["--version"])).stdout).toMatch(/^monolith \d+\.\d+\.\d+\n$/);
+    expect((await run(["-v"])).stdout).toMatch(/^monolith /);
+    expect((await run(["--help"])).stdout).toContain("Usage:");
+    expect((await run([])).stdout).toContain("Usage:");
   });
 
-  it("list <category> shows functions", async () => {
-    const r = await run(["list", "strings"]);
-    expect(r.stdout).toMatch(/strings\/toCamelCase/);
-    expect(r.exit).toBe(0);
+  it("list shows categories and functions, as prose or JSON", async () => {
+    const cats = await run(["list"]);
+    expect(cats.stdout).toContain("strings");
+    const json = (await run(["list", "--json"])).json() as {
+      result: { categories: Array<{ count: number }> };
+    };
+    expect(json.result.categories.reduce((n, c) => n + c.count, 0)).toBe(functions.length);
+    const fns = await run(["list", "strings", "--json"]);
+    expect(
+      (fns.json() as { result: { functions: unknown[] } }).result.functions.length
+    ).toBeGreaterThan(5);
+    const bad = await run(["list", "nope", "--json"]);
+    expect(bad.json()).toMatchObject({ errorCode: "UNKNOWN_CATEGORY" });
   });
 
-  it("search finds matching functions", async () => {
-    const r = await run(["search", "email"]);
-    expect(r.stdout).toMatch(/validation\/isEmail/);
-    expect(r.exit).toBe(0);
+  it("search finds by keyword with optional category", async () => {
+    expect((await run(["search", "hash"])).stdout).toContain("encoding/hashSha256");
+    const r = (await run(["search", "hash", "--category", "strings", "--json"])).json() as {
+      result: { count: number };
+    };
+    expect(r.result.count).toBe(0);
+    expect((await run(["search", "--json"])).json()).toMatchObject({
+      errorCode: "MISSING_ARGUMENT",
+    });
   });
 
-  it("describe returns JSON metadata", async () => {
-    const r = await run(["describe", "strings/toCamelCase"]);
-    const parsed = JSON.parse(r.stdout);
-    expect(parsed.name).toBe("strings/toCamelCase");
-    expect(parsed.parameters).toBeInstanceOf(Array);
-    expect(r.exit).toBe(0);
+  it("describe and schema emit JSON", async () => {
+    const d = (await run(["describe", "strings/truncate"])).json() as {
+      parameters: Array<{ name: string }>;
+    };
+    expect(d.parameters.map((p) => p.name)).toEqual(["input", "length", "suffix"]);
+    const s = (await run(["schema", "strings/truncate"])).json() as {
+      properties: Record<string, unknown>;
+    };
+    expect(Object.keys(s.properties)).toEqual(["input", "length", "suffix"]);
+    const all = (await run(["schema"])).json();
+    expect(Object.keys(all).length).toBe(functions.length);
   });
 
-  it("--help prints usage", async () => {
-    const r = await run(["--help"]);
-    expect(r.stdout).toMatch(/monolith/);
-    expect(r.stdout).toMatch(/Usage:/);
-    expect(r.exit).toBe(0);
+  it("function --help shows parameters and shell-safe examples", async () => {
+    const r = await run(["data/arrays/sortBy", "--help"]);
+    expect(r.stdout).toContain("--array");
+    expect(r.stdout).toContain("--direction");
+    expect(r.stdout).toContain('(default: "asc")');
+    expect(r.stdout).toContain('--array \'[{"age":30},{"age":25}]\' --key age');
+  });
+});
+
+describe("composition", () => {
+  it("pipe chains functions over stdin", async () => {
+    const r = await run(["pipe", "strings/slugify", "encoding/base64Encode"], "My Post");
+    expect(r.stdout.trim()).toBe(Buffer.from("my-post").toString("base64"));
+    const bad = await run(["pipe", "strings/slugify", "math/round", "--json"], "x");
+    expect(bad.exit).toBe(2);
+    expect(bad.json()).toMatchObject({ errorCode: "INVALID_INPUT" });
+    expect((await run(["pipe", "strings/nope", "--json"], "x")).json()).toMatchObject({
+      errorCode: "UNKNOWN_FUNCTION",
+    });
   });
 
-  it("<fn> --help prints function help", async () => {
-    const r = await run(["strings/truncate", "--help"]);
-    expect(r.stdout).toMatch(/strings\/truncate/);
-    expect(r.stdout).toMatch(/--length/);
-    expect(r.exit).toBe(0);
+  it("batch reads JSONL and writes one envelope per line", async () => {
+    const lines = [
+      '{"name":"strings/slugify","args":{"input":"A B"}}',
+      '{"name":"math/clamp","args":{"value":1,"min":5,"max":1}}',
+    ].join("\n");
+    const r = await run(["batch"], lines);
+    const out = r.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    expect(out[0]).toEqual({ name: "strings/slugify", success: true, result: "a-b" });
+    expect(out[1]).toMatchObject({
+      name: "math/clamp",
+      success: false,
+      errorCode: "INVALID_RANGE",
+    });
+    expect(r.exit).toBe(2);
+    expect((await run(["batch", "--json"], "not json")).json()).toMatchObject({
+      errorCode: "INVALID_ARGS_JSON",
+    });
   });
 });

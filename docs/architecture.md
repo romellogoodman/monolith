@@ -1,126 +1,63 @@
-# Architecture Overview
+# Architecture
 
-## Core Components
+## One definition, many surfaces
 
-### 1. Function Registry Pattern
+Every function is declared once with `defineFunction()` ([src/core/define.ts](../src/core/define.ts)):
 
-**Files:** [src/registry/index.ts](../src/registry/index.ts), [src/registry/functions.ts](../src/registry/functions.ts)
-
-The registry is a central in-memory store of function metadata. All utility functions register themselves with:
-- Name (namespace pattern: `category/functionName`)
-- Category and optional subcategory
-- Description and parameters
-- Examples and tags
-- Performance characteristics
-
-**Key Methods:**
-- `registerFunction(metadata)` - Add function to registry
-- `getAllFunctions()` - Get all registered functions
-- `searchFunctions(query, category?)` - Search by keywords
-- `getFunction(name)` - Get specific function metadata
-- `getCategories()` - List all categories with counts
-
-### 2. Discovery Tools
-
-**Files:** [src/discovery/](../src/discovery/)
-
-Three MCP tools enable function discovery:
-
-- **`search_functions`** - Fuzzy search across names, descriptions, tags, and categories
-- **`list_categories`** - Returns all categories with function counts
-- **`describe_function`** - Full documentation for a specific function
-
-These tools query the registry and return structured data.
-
-### 3. Dispatch Table & Surfaces
-
-**File:** [src/registry/dispatch.ts](../src/registry/dispatch.ts)
-
-A single `dispatchEntries` list maps function name → `{ schema, execute }`. Both the MCP adapter ([src/server.ts](../src/server.ts)) and the CLI adapter ([src/cli.ts](../src/cli.ts)) iterate this table; neither knows how the other renders input or output. Adding a function means one new entry.
-
-The MCP adapter:
-1. Expands `dispatchEntries` into `ListToolsRequestSchema` tool descriptors
-2. Looks up by name on `CallToolRequestSchema`, calls `entry.execute(args)`, wraps result in MCP `{ content: [...] }` envelope
-
-The CLI adapter:
-1. Parses argv → `{ command, positionals, flags, json }`
-2. Looks up the entry, builds the args object from positionals/flags (stdin fills the first required field when piped)
-3. Calls `entry.execute(args)` and formats output per `--json` rules
-4. On any failure, builds an `ErrorResponse` with `errorCode` and `next` recovery steps (commands derived from the schema, with `<field>` placeholders) — prose on stderr, or the envelope on stdout under `--json`
-
-Both adapters translate Zod failures with `validationErrorResponse()` from [src/types/responses.ts](../src/types/responses.ts), so a bad argument yields the same `INVALID_INPUT` + `issues[]` shape over MCP and the CLI.
-
-### 4. Response Format
-
-**File:** [src/types/responses.ts](../src/types/responses.ts)
-
-All functions return `UtilityResponse<T>`:
-- `SuccessResponse<T>` - Contains result and optional metadata
-- `ErrorResponse` - Contains error message and code
-
-Helper functions enforce consistency:
-- `successResponse(result, metadata?)`
-- `errorResponse(error, errorCode, details?)`
-
-### 5. Validation Layer
-
-**Files:** [src/schemas/](../src/schemas/)
-
-Each category has a Zod schemas file defining input validation:
-- `strings.ts` - Case transformations, manipulation
-- `validation.ts` - Email, URL, UUID validators
-- `conversion.ts` - Format conversions (JSON↔CSV)
-- `dates.ts` - Date parsing, formatting, arithmetic
-- `math.ts` - Numeric operations
-- `data.ts` - Array and object operations
-- `encoding.ts` - Base64, URL encoding
-
-Zod schemas are exported and used in:
-1. Tool registration (`inputSchema` field)
-2. Request handling (validation before execution)
-
-## Data Flow
-
-```
-  MCP CallTool              CLI argv
-       │                       │
-       └───────┬───────────────┘
-               ▼
-      getDispatchEntry(name)
-               ▼
-      entry.schema.parse(args)   (Zod validation)
-               ▼
-      entry.execute(args)        (utility function)
-               ▼
-      UtilityResponse<T>
-               ▼
-  ┌────────────┴────────────┐
-  ▼                         ▼
-MCP envelope           CLI output rules
-({content:[...]})      (scalar | JSON | --json envelope)
+```ts
+defineFunction({
+  name: "math/clamp",
+  description: "Constrain a number to the inclusive range [min, max].",
+  input: z.object({ value: ..., min: ..., max: ... }),
+  returns: "value limited to the range",
+  tags: ["math", "clamp", "limit"],
+  examples: [{ description: "Above max", input: { value: 100, min: 0, max: 50 }, output: 50 }],
+  run: (a) => clamp(a.value, a.min, a.max),
+});
 ```
 
-## Adding New Categories
+Everything else is derived from that object:
 
-To add a new category:
+| Consumer | Derives |
+|---|---|
+| `execute()` | Validation (Zod `safeParse`), invocation, envelope |
+| Registry ([src/core/registry.ts](../src/core/registry.ts)) | Lookup by name, MCP tool name, category list, keyword search, "did you mean" suggestions, `FunctionMetadata` (parameters from the JSON Schema projection) |
+| MCP adapter ([src/server.ts](../src/server.ts)) | Tool list (`inputSchema`, `title`, annotations), `describe_function` payloads |
+| CLI adapter ([src/cli.ts](../src/cli.ts)) | Flags (kebab-cased field names), positional order, stdin target, `--help` text, recovery-step commands, `schema` output |
+| Tests ([tests/unit/registry.test.ts](../tests/unit/registry.test.ts)) | The example sweep: every example must reproduce exactly |
 
-1. Create `src/utils/[category]/` directory
-2. Create `src/schemas/[category].ts` with Zod schemas
-3. Implement functions following response format
-4. Register functions in `src/registry/functions.ts`
-5. Add entries to `src/registry/dispatch.ts` (wires up both MCP and CLI)
+## Execution path
 
-## Performance Considerations
+```
+raw args ─► fn.input.safeParse ─► fn.run(parsed) ─► { success: true, result }
+                 │                       │
+                 └─ ZodError             └─ UtilityError(code) ─► { success: false, errorCode: code, error }
+                    ─► INVALID_INPUT + issues[]      other throw ─► EXECUTION_ERROR
+```
 
-- **Registry lookup**: O(n) search, optimized with array filters
-- **Function execution**: Target <10ms per function
-- **No async I/O**: All operations are synchronous and stateless
-- **Memory-only**: No database or file system operations
+`execute()` is the only way either surface invokes a function. Implementations never see envelopes: they return a value or throw `fail(code, message, details?)` ([src/core/responses.ts](../src/core/responses.ts)).
 
-## Extension Points
+## Registry
 
-The architecture supports growth:
-- Add new utility categories without changing core structure
-- Discovery tools scale with any number of functions
-- Registry can be enhanced with caching or indexing
-- Response format can include execution time tracking
+[src/core/registry.ts](../src/core/registry.ts) imports each `src/functions/<category>.ts` module's `functions` array and concatenates them into one frozen list. There is no registration call and no mutable state. `CATEGORIES` holds the human descriptions shown by `list_categories`; adding a category means one import and one description.
+
+`toToolName()` maps `strings/toCamelCase` to `strings_toCamelCase` because MCP tool names should not contain `/`. `getFunction()` accepts either form.
+
+## MCP adapter
+
+- `tools/list` is computed once at startup and returned in a stable order (good for client prompt caches).
+- Every tool carries `annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }` and a `title`.
+- `tools/call` returns the envelope as both a text block and `structuredContent`; `isError` is set whenever `success` is false.
+- Discovery tools (`search_functions`, `list_categories`, `describe_function`) validate their arguments through the same `validationErrorResponse`.
+- Composition tools `batch` and `pipe` ([src/core/compose.ts](../src/core/compose.ts)) run several functions per request.
+- `MONOLITH_TOOL_MODE=compact` replaces the per-function tools with a single `run` tool for clients that load every schema up front.
+- The `initialize` response carries `instructions` that tell the model what the server is for.
+
+## CLI adapter
+
+1. `parseArgv` separates output flags (`--json`, `--raw`, `-q`, `--help`, `--version`), field flags (`--kebab-name value`, `--kebab-name=value`, bare `--flag` for booleans), a `--` terminator, the command, and positionals.
+2. `buildArgs` merges, in order: `--args` JSON object, flags, piped stdin (into the first required field not yet set), positionals (into the remaining fields in declaration order). String fields are taken verbatim; other fields are JSON-parsed.
+3. `execute()` runs the function. `INVALID_INPUT` is reworded in terms of flags and gets `next` steps built from the schema; function errors exit 2 with a help step.
+4. Output follows the `--json` / `--raw` / `--quiet` rules; `index.ts` sets `process.exitCode` so large piped output is flushed.
+
+Subcommands `list`, `search`, `describe`, `schema`, `pipe`, and `batch` all read the same registry.

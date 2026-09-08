@@ -1,282 +1,39 @@
-# Testing Guide
-
-## Test Structure
-
-Tests are organized in `tests/` directory mirroring the `src/` structure:
+# Testing
 
 ```
-tests/
-├── unit/
-│   ├── registry.test.ts          # Registry functionality
-│   └── utils/
-│       ├── strings.test.ts       # String utilities
-│       ├── validation.test.ts    # Validation utilities
-│       └── ...                   # One file per utility category
-└── integration/
-    └── server.test.ts            # Server integration tests (future)
+tests/unit/
+├── registry.test.ts     # contract for every function (names, metadata, example sweep)
+├── server.test.ts       # MCP adapter via a real client over InMemoryTransport
+├── cli.test.ts          # runCli() with stdout/stderr captured and stdin faked
+└── functions/           # one suite per category, testing raw functions + error envelopes
 ```
-
-## Running Tests
 
 ```bash
-# Run all tests once
-npm test
-
-# Watch mode (re-run on file changes)
+npm test                                   # everything, once
 npm run test:watch
-
-# Run specific test file
-npx vitest tests/unit/utils/strings.test.ts
-
-# Run with coverage (add to package.json if needed)
-npx vitest --coverage
+npx vitest --run tests/unit/functions/dates.test.ts
+TZ=Asia/Tokyo npm test                     # results must not change
 ```
 
-## Writing Unit Tests
+## Patterns
 
-### Test Structure Pattern
+**Raw functions** are exported from each module, so most tests call them directly:
 
-**File:** [tests/unit/utils/strings.test.ts](../tests/unit/utils/strings.test.ts)
-
-```typescript
-import { describe, it, expect } from "vitest";
-import { toCamelCase, toKebabCase } from "../../../src/utils/strings/case.js";
-
-describe("String Case Utilities", () => {
-  describe("toCamelCase", () => {
-    it("should convert hyphenated string to camelCase", () => {
-      const result = toCamelCase("hello-world");
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.result).toBe("helloWorld");
-      }
-    });
-
-    it("should handle edge case: empty string", () => {
-      const result = toCamelCase("");
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.result).toBe("");
-      }
-    });
-  });
-});
+```ts
+expect(round(1.005, 2)).toBe(1.01);
+expect(() => clamp(1, 5, 1)).toThrow(UtilityError);
 ```
 
-### Testing Response Format
+**Envelopes** go through `execute()`; use it for at least one error path per fallible function:
 
-Always test both success and error cases:
-
-```typescript
-describe("myFunction", () => {
-  // Success case
-  it("should return success response with correct result", () => {
-    const result = myFunction("valid input");
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.result).toBe("expected output");
-      expect(result.metadata?.inputType).toBe("string");
-      expect(result.metadata?.outputType).toBe("string");
-    }
-  });
-
-  // Error case
-  it("should return error response for invalid input", () => {
-    const result = myFunction("invalid");
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("expected error message");
-      expect(result.errorCode).toBe("EXPECTED_ERROR_CODE");
-    }
-  });
-});
+```ts
+const fn = functions.find((f) => f.name === "math/clamp")!;
+expect(execute(fn, { value: 1, min: 5, max: 1 })).toMatchObject({ success: false, errorCode: "INVALID_RANGE" });
+expect(execute(fn, { value: "x" })).toMatchObject({ success: false, errorCode: "INVALID_INPUT" });
 ```
 
-### Type Narrowing Pattern
+**Examples** in `defineFunction` are executed by `tests/unit/registry.test.ts`. A wrong example fails the build, so examples double as documentation and regression tests.
 
-TypeScript's type narrowing with `result.success` ensures type safety:
+**Timezone independence:** `tests/unit/functions/dates.test.ts` sets `process.env.TZ` before importing anything and asserts UTC results; CI-style runs under other zones must produce the same output.
 
-```typescript
-const result = myFunction(input);
-
-// Type: UtilityResponse<T> (union type)
-expect(result.success).toBe(true);
-
-if (result.success) {
-  // Type: SuccessResponse<T>
-  result.result;        // Accessible
-  result.metadata;      // Accessible
-  // result.error;      // Not accessible (TypeScript error)
-} else {
-  // Type: ErrorResponse
-  result.error;         // Accessible
-  result.errorCode;     // Accessible
-  // result.result;     // Not accessible (TypeScript error)
-}
-```
-
-## Testing Registry Functions
-
-**File:** [tests/unit/registry.test.ts](../tests/unit/registry.test.ts)
-
-```typescript
-import { describe, it, expect, beforeAll } from "vitest";
-import {
-  getAllFunctions,
-  getCategories,
-  searchFunctions,
-  getFunction,
-} from "../../src/registry/index.js";
-import { registerAllFunctions } from "../../src/registry/functions.js";
-
-describe("Function Registry", () => {
-  beforeAll(() => {
-    registerAllFunctions();
-  });
-
-  it("should return all registered functions", () => {
-    const functions = getAllFunctions();
-    expect(functions.length).toBeGreaterThan(0);
-    expect(functions[0]).toHaveProperty("name");
-    expect(functions[0]).toHaveProperty("category");
-  });
-
-  it("should search functions by keyword", () => {
-    const results = searchFunctions("camel");
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0].name).toContain("Camel");
-  });
-});
-```
-
-## Test Coverage Goals
-
-### Essential Coverage
-- ✅ All utility functions (happy path)
-- ✅ Error cases for each function
-- ✅ Registry search/lookup operations
-- ✅ Edge cases (empty strings, zero values, boundary conditions)
-
-### Good-to-Have Coverage
-- Integration tests for MCP server lifecycle
-- Discovery tools (search_functions, list_categories, describe_function)
-- Zod schema validation failures
-- Complex input scenarios
-
-### Out of Scope
-- MCP SDK internals (covered by SDK tests)
-- Third-party library behavior (validator, Papa Parse, date-fns)
-
-## Common Test Patterns
-
-### Testing Array Operations
-
-```typescript
-it("should return unique values", () => {
-  const result = unique([1, 2, 2, 3, 3, 3]);
-  expect(result.success).toBe(true);
-  if (result.success) {
-    expect(result.result).toEqual([1, 2, 3]);
-  }
-});
-```
-
-### Testing Date Functions
-
-```typescript
-it("should parse date to ISO format", () => {
-  const result = parseDate("2025-12-11");
-  expect(result.success).toBe(true);
-  if (result.success) {
-    expect(result.result).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-  }
-});
-```
-
-### Testing Validation Functions
-
-```typescript
-it("should validate correct email", () => {
-  const result = isEmail("user@example.com");
-  expect(result.success).toBe(true);
-  if (result.success) {
-    expect(result.result).toBe(true);
-  }
-});
-
-it("should reject invalid email", () => {
-  const result = isEmail("not-an-email");
-  expect(result.success).toBe(true);  // Function succeeds
-  if (result.success) {
-    expect(result.result).toBe(false);  // But validation fails
-  }
-});
-```
-
-### Testing Error Handling
-
-```typescript
-it("should handle invalid input gracefully", () => {
-  const result = clamp(100, 50, 10);  // min > max
-  expect(result.success).toBe(false);
-  if (!result.success) {
-    expect(result.errorCode).toBe("INVALID_RANGE");
-    expect(result.error).toContain("Min value cannot be greater than max");
-  }
-});
-```
-
-## Debugging Failed Tests
-
-```bash
-# Run single test with verbose output
-npx vitest tests/unit/utils/strings.test.ts --reporter=verbose
-
-# Run tests matching pattern
-npx vitest --grep "toCamelCase"
-
-# Run only failing tests
-npx vitest --only
-```
-
-## Pre-Commit Testing
-
-Before committing changes:
-
-```bash
-# Full verification suite
-npm run typecheck  # TypeScript errors
-npm test           # All tests
-npm run build      # Compilation
-```
-
-## Adding Integration Tests
-
-Future integration tests should verify:
-- Server startup and shutdown
-- Tool discovery via MCP protocol
-- End-to-end tool execution
-- Error handling at protocol level
-
-Example structure (not yet implemented):
-
-```typescript
-// tests/integration/server.test.ts
-describe("MCP Server", () => {
-  let server: Server;
-
-  beforeAll(() => {
-    server = createServer();
-  });
-
-  it("should list all available tools", async () => {
-    // Test ListTools request
-  });
-
-  it("should execute tool and return result", async () => {
-    // Test CallTool request
-  });
-});
-```
+**Adapters:** `server.test.ts` connects a real `Client` to `createServer()` and checks tool listing, annotations, `structuredContent`, `isError`, both tool modes, `batch`, and `pipe`. `cli.test.ts` drives `runCli()` and asserts stdout, stderr, exit codes, and the JSON error envelopes with their `next` steps.

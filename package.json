@@ -1,22 +1,24 @@
 {
   "name": "monolith",
-  "version": "1.0.0",
-  "description": "Deterministic Utility MCP Server - A Model Context Protocol server providing 42 tested utility functions for AI agents",
+  "version": "2.0.0",
+  "description": "Deterministic utility functions for AI agents, as an MCP stdio server and a CLI in one binary",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "./dist/core/registry.js",
   "bin": {
     "monolith": "dist/index.js"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "start": "node dist/index.js",
-    "test": "vitest",
-    "test:watch": "vitest --watch",
-    "lint": "eslint src/**/*.ts",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\"",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write \"{src,tests}/**/*.ts\"",
+    "format:check": "prettier --check \"{src,tests}/**/*.ts\"",
     "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
     "clean": "rm -rf dist"
   },
   "keywords": [
@@ -24,31 +26,56 @@
     "model-context-protocol",
     "utilities",
     "ai-tools",
-    "deterministic"
+    "deterministic",
+    "cli",
+    "agents"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "Romello Goodman",
+  "license": "MIT",
   "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@date-fns/tz": "^1.5.0",
+    "@date-fns/utc": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "date-fns": "^4.1.0",
-    "fast-xml-parser": "^4.5.0",
-    "js-yaml": "^4.1.1",
+    "diff": "^9.0.0",
+    "fast-json-patch": "^3.1.1",
+    "fast-xml-parser": "^5.11.1",
+    "jmespath": "^0.16.0",
+    "js-yaml": "^4.3.2",
+    "jsonc-parser": "^3.3.1",
     "marked": "^18.0.2",
     "papaparse": "^5.5.3",
+    "semver": "^7.8.5",
     "validator": "^13.15.35",
     "zod": "^4.4.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/jmespath": "^0.15.2",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.6.0",
     "@types/papaparse": "^5.3.14",
+    "@types/semver": "^7.8.0",
     "@types/validator": "^13.15.10",
-    "@typescript-eslint/eslint-plugin": "^8.59.0",
-    "@typescript-eslint/parser": "^8.59.1",
     "eslint": "^9.0.0",
     "prettier": "^3.8.3",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^4.1.5"
-  }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.2"
+  },
+  "exports": {
+    ".": "./dist/core/registry.js",
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/core/registry.d.ts"
 }
