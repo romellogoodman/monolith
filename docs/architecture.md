@@ -55,9 +55,9 @@ raw args ─► fn.input.safeParse ─► fn.run(parsed) ─► { success: true,
 
 ## CLI adapter
 
-1. `parseArgv` separates output flags (`--json`, `--raw`, `-q`, `--help`, `--version`), field flags (`--kebab-name value`, `--kebab-name=value`, bare `--flag` for booleans), a `--` terminator, the command, and positionals.
-2. `buildArgs` merges, in order: `--args` JSON object, flags, piped stdin (into the first required field not yet set), positionals (into the remaining fields in declaration order). String fields are taken verbatim; other fields are JSON-parsed.
-3. `execute()` runs the function. `INVALID_INPUT` is reworded in terms of flags and gets `next` steps built from the schema; function errors exit 2 with a help step.
+1. `parseArgv` separates output options (`--json`, `--raw`, `-q`, `--help`, `--version`), field options (`--kebab-name value`, `--kebab-name=value`, bare `--option` or `--no-option` for booleans), a `--` terminator, the command, and positionals.
+2. `buildArgs` merges, in order: `--args` JSON object, options, piped stdin (into the first required field not yet set), positionals (into the remaining fields in declaration order). String fields are taken verbatim; other fields are JSON-parsed.
+3. `execute()` runs the function. `INVALID_INPUT` is reworded in terms of options and gets `next` steps built from the schema; validation and usage errors exit 2, function errors exit 1 with a help step.
 4. Output follows the `--json` / `--raw` / `--quiet` rules; `index.ts` sets `process.exitCode` so large piped output is flushed.
 
-Subcommands `list`, `search`, `describe`, `schema`, `pipe`, and `batch` all read the same registry.
+Subcommands `list`, `search`, `describe`, `schema`, `pipe`, `batch`, and `help` all read the same registry. Each declares its options and positional counts in `BUILTINS`, which drives both validation (unknown options and extra arguments exit 2 before any work) and its help text.

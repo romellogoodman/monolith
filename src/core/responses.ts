@@ -25,10 +25,13 @@ export interface ValidationIssue {
 
 /**
  * A concrete recovery step. `command` is runnable as-is once any
- * `<placeholder>` tokens are substituted; `when` says why you'd run it.
+ * `<PLACEHOLDER>` tokens are substituted; `when` says why you'd run it.
+ * `argv` is the same command split into arguments, present when the step is
+ * a single invocation (not a shell pipeline).
  */
 export interface NextStep {
   command: string;
+  argv?: string[];
   when: string;
 }
 

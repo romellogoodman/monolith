@@ -1,6 +1,6 @@
 {
   "name": "monolith",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Deterministic utility functions for AI agents, as an MCP stdio server and a CLI in one binary",
   "type": "module",
   "main": "./dist/core/registry.js",

@@ -140,6 +140,8 @@ export interface ParameterInfo {
   description: string;
   required: boolean;
   default?: unknown;
+  /** Accepted values, when the parameter is an enum. */
+  enum?: unknown[];
 }
 
 export interface FunctionMetadata {
@@ -157,7 +159,7 @@ export interface FunctionMetadata {
 interface JsonSchemaObject {
   properties?: Record<
     string,
-    { type?: string | string[]; description?: string; default?: unknown }
+    { type?: string | string[]; description?: string; default?: unknown; enum?: unknown[] }
   >;
   required?: string[];
 }
@@ -180,6 +182,7 @@ export function describeFunction(fn: AnyFunction): FunctionMetadata {
       required: required.has(name),
     };
     if (prop.default !== undefined) info.default = prop.default;
+    if (prop.enum) info.enum = prop.enum;
     return info;
   });
   const { category, subcategory } = splitName(fn.name);

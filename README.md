@@ -34,30 +34,34 @@ monolith data/arrays/unique '[1,2,2,3]' --raw
 echo "My Post" | monolith pipe strings/slugify encoding/base64Encode
 ```
 
-**Argument binding**, in order: `--args '<json object>'`, `--flag value` (kebab-case, `--flag=value` also works), piped stdin (fills the first required field), then positionals in declaration order. Values are JSON-parsed unless the field is a string. Use `--` to stop flag parsing when a value begins with `--`.
+**Argument binding**, in order: `--args '<json object>'`, `--option value` (kebab-case, `--option=value` also works; booleans also take `--no-option`), piped stdin (fills the first required field), then positionals in declaration order. Values are JSON-parsed unless the field is a string. Use `--` to stop option parsing when a value begins with `--`.
 
-**Output flags**
+**Output options**
 
-| Flag | Effect |
+| Option | Effect |
 |---|---|
-| (none) | Scalars raw; objects and arrays as pretty JSON |
-| `--json` | Full `{ success, result }` envelope; errors as `{ success: false, error, errorCode, issues?, next }` |
+| (none) | Scalars raw; objects and arrays as JSON (indented on a TTY, one line when piped) |
+| `--json` | `{ success, result }` envelope on stdout. On failure, stdout is empty and stderr gets one line: `{ success: false, error, errorCode, issues?, next: [{ command, argv, when }] }` |
 | `--raw` | Line-oriented: arrays one item per line, objects `key=value` per line |
 | `-q`, `--quiet` | No stdout; boolean results set the exit code (0 true, 1 false) |
 
-**Exit codes:** `0` ok, `1` usage or validation error (or `--quiet` false), `2` the function rejected the input.
+**Exit codes:** `0` success (including an empty search), `1` the function failed (or `--quiet` saw false, or some `batch` call failed), `2` usage error or invalid input, `130` interrupted (`128 + n` for signal `n`).
+
+Listings (`list`, `search`) print aligned tables on a TTY and tab-separated rows with a header row when piped.
 
 **Errors carry their recovery.** Every error names the exact commands to run next; without `--json` this goes to stderr:
 
 ```
 $ monolith strings/truncate hello
-error: strings/truncate requires --length
+Error: Can't run strings/truncate without --length.
 
-Substitute <length> and rerun:
-  monolith strings/truncate --input hello --length <length>
-See parameter descriptions and examples:
-  monolith strings/truncate --help
+Rerun with <LENGTH> filled in:
+    monolith strings/truncate --input hello --length <LENGTH>
+See strings/truncate options:
+    monolith strings/truncate --help
 ```
+
+The CLI follows [Vercel's CLI design guidelines](https://vercel.com/design/cli) where they apply to a local, read-only tool. The intended deviations: `-q` means `--quiet` (grep-style), not `--query`; `--raw` is an extra output mode; JSON results use the `{ success, result }` envelope that MCP shares instead of the guide's per-noun shapes.
 
 **Discovery and composition**
 
@@ -67,7 +71,8 @@ monolith list dates                # functions in one category
 monolith search "json diff"        # keyword search, best matches first
 monolith describe json/patch       # parameters, return value, examples (JSON)
 monolith schema [name]             # JSON Schema for one or every function
-monolith <fn> --help               # parameters and runnable examples
+monolith <fn> --help               # parameters and runnable examples (also: monolith help <fn>)
+monolith <fn> --help --json        # the same, as JSON
 monolith pipe <fn> [<fn>...]       # chain functions; value from stdin or --input
 printf '{"name":"strings/slugify","args":{"input":"A B"}}\n' | monolith batch   # JSONL in, JSONL out
 ```

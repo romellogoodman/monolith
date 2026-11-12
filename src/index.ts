@@ -7,8 +7,16 @@
 import { runServer } from "./server.js";
 import { runCli } from "./cli.js";
 
-process.on("SIGINT", () => process.exit(0));
-process.on("SIGTERM", () => process.exit(0));
+// Exit 128 + signal number: SIGINT 130, SIGTERM 143, SIGHUP 129.
+process.on("SIGINT", () => process.exit(130));
+process.on("SIGTERM", () => process.exit(143));
+process.on("SIGHUP", () => process.exit(129));
+
+// A reader closing the pipe early (`monolith list | head -1`) ends the run quietly.
+process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code === "EPIPE") process.exit(0);
+  throw error;
+});
 
 const argv = process.argv.slice(2);
 

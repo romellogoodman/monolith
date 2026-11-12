@@ -1,11 +1,16 @@
 /**
  * CLI adapter over the shared registry.
  *
- *   monolith <category/function> [args...] [--flag value] [--json|--raw|-q]
- *   monolith pipe <fn> [<fn>...]        value from stdin or --input
+ *   monolith <category/function> [<VALUE>...] [--option value] [--json|--raw|-q]
+ *   monolith pipe <FUNCTION>...         value from stdin or --input
  *   monolith batch                      JSONL {"name","args"} on stdin → JSONL
- *   monolith list [category] | search <query> | describe <name> | schema [name]
- *   monolith --help | --version
+ *   monolith list [<CATEGORY>] | search <QUERY> | describe <FUNCTION> | schema [<FUNCTION>]
+ *   monolith help [<COMMAND>] | --help | --version
+ *
+ * Follows the Vercel CLI design guidelines (https://vercel.com/design/cli)
+ * where they apply to a local, read-only tool: stdout is the answer, every
+ * error carries its recovery, exit 0 ok / 1 failure / 2 usage, --json is an
+ * exact contract (one document on stdout, or one error line on stderr).
  */
 
 import { execute, type AnyFunction } from "./core/define.js";
@@ -30,6 +35,9 @@ import {
 } from "./core/registry.js";
 import { callSchema, runBatch, runPipe } from "./core/compose.js";
 
+/** 0 completed (including empty results); 1 operational failure or `-q` false; 2 usage or invalid input. */
+export const EXIT = { OK: 0, FAILURE: 1, USAGE: 2 } as const;
+
 // ---------------------------------------------------------------------------
 // argv parsing
 // ---------------------------------------------------------------------------
@@ -37,7 +45,7 @@ import { callSchema, runBatch, runPipe } from "./core/compose.js";
 interface ParsedArgv {
   command: string | undefined;
   positionals: string[];
-  /** `true` marks a bare `--flag` with no value. */
+  /** `true` marks a bare `--option` with no value. */
   flags: Record<string, string | true>;
   json: boolean;
   raw: boolean;
@@ -60,6 +68,9 @@ const OUTPUT_FLAGS: Record<string, keyof ParsedArgv> = {
 const kebabToCamel = (s: string) => s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 const camelToKebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 const looksLikeFlag = (tok: string) => tok.startsWith("--") && tok.length > 2;
+const optionName = (key: string) => `--${camelToKebab(key)}`;
+/** `isoDate` → `<ISO_DATE>` */
+const placeholder = (key: string) => `<${camelToKebab(key).replace(/-/g, "_").toUpperCase()}>`;
 
 export function parseArgv(argv: string[]): ParsedArgv {
   const out: ParsedArgv = {
@@ -149,6 +160,7 @@ function readStdin(): Promise<string> {
   });
 }
 
+/** Piped stdin with one trailing newline dropped; undefined on a TTY or when empty. */
 async function pipedStdin(): Promise<string | undefined> {
   if (process.stdin.isTTY) return undefined;
   const text = (await readStdin()).replace(/\r?\n$/, "");
@@ -156,8 +168,8 @@ async function pipedStdin(): Promise<string | undefined> {
 }
 
 /**
- * Build the argument object from `--args`, flags, piped stdin, and positionals.
- * Stdin (when present) fills the first required field not given as a flag;
+ * Build the argument object from `--args`, options, piped stdin, and positionals.
+ * Stdin (when present) fills the first required field not given as an option;
  * positionals then fill the remaining fields in declaration order.
  */
 async function buildArgs(fn: AnyFunction, parsed: ParsedArgv): Promise<Record<string, unknown>> {
@@ -176,41 +188,53 @@ async function buildArgs(fn: AnyFunction, parsed: ParsedArgv): Promise<Record<st
     if (parsedJson === null || typeof parsedJson !== "object" || Array.isArray(parsedJson)) {
       throw new CliError({
         success: false,
-        error: "--args must be a JSON object",
+        error: `Can't parse --args. It must be a JSON object.`,
         errorCode: "INVALID_ARGS_JSON",
         next: [
           {
-            command: `monolith ${fn.name} --args '{"${fieldNames[0]}": <value>}'`,
+            command: `monolith ${fn.name} --args '{"${fieldNames[0]}": ${placeholder(fieldNames[0])}}'`,
             when: "Pass all arguments as one JSON object",
           },
-          helpStep(fn),
+          helpStep(fn.name),
         ],
       });
     }
     Object.assign(args, parsedJson);
   }
 
-  for (const [key, value] of Object.entries(flags)) {
+  for (const [rawKey, value] of Object.entries(flags)) {
+    let key = rawKey;
+    let bound: unknown = value;
+    // --no-<boolean> is the negative form of a boolean option.
+    const negated = /^no[A-Z]/.test(rawKey) && rawKey[2].toLowerCase() + rawKey.slice(3);
+    if (!(key in shape) && negated && negated in shape && value === true) {
+      if (fieldType(shape[negated]) === "boolean") {
+        key = negated;
+        bound = false;
+      }
+    }
     if (!(key in shape)) {
       throw new CliError({
         success: false,
-        error: `Unknown flag --${camelToKebab(key)} for ${fn.name}. Valid flags: ${fieldNames.map((f) => "--" + camelToKebab(f)).join(", ")}`,
-        errorCode: "UNKNOWN_FLAG",
+        error: `Unknown option ${optionName(rawKey)} for monolith ${fn.name}.\nValid options: ${fieldNames.map(optionName).join(", ")}`,
+        errorCode: "UNKNOWN_OPTION",
         next: recoverySteps(fn, args),
       });
     }
-    if (value === true) {
+    if (bound === true) {
       if (fieldType(shape[key]) !== "boolean") {
         throw new CliError({
           success: false,
-          error: `--${camelToKebab(key)} needs a value`,
+          error: `Can't run ${fn.name} without a value for ${optionName(key)}.`,
           errorCode: "MISSING_VALUE",
           next: recoverySteps(fn, args, new Set([key])),
         });
       }
       args[key] = true;
+    } else if (typeof bound === "string") {
+      args[key] = coerce(bound, shape[key]);
     } else {
-      args[key] = coerce(value, shape[key]);
+      args[key] = bound;
     }
   }
 
@@ -225,7 +249,7 @@ async function buildArgs(fn: AnyFunction, parsed: ParsedArgv): Promise<Record<st
   if (parsed.positionals.length > unfilled.length) {
     throw new CliError({
       success: false,
-      error: `Too many positional arguments for ${fn.name}. Fields: ${fieldNames.join(", ")}${stdin !== undefined ? " (stdin already filled one)" : ""}`,
+      error: `Can't run ${fn.name}. Got ${plural(parsed.positionals.length, "positional argument")} for ${plural(unfilled.length, "unfilled field")}.\nFields in order: ${fieldNames.join(", ")}${stdin !== undefined ? " (stdin filled one)" : ""}`,
       errorCode: "TOO_MANY_ARGUMENTS",
       next: recoverySteps(fn, args),
     });
@@ -240,60 +264,75 @@ async function buildArgs(fn: AnyFunction, parsed: ParsedArgv): Promise<Record<st
 // Errors and recovery steps
 // ---------------------------------------------------------------------------
 
-/** Exit 1 = usage or validation; 2 = the function rejected the input. */
+/** A CLI-level failure with its envelope and exit code (usage by default). */
 class CliError extends Error {
   constructor(
     readonly envelope: ErrorResponse,
-    readonly exit: number = 1
+    readonly exit: number = EXIT.USAGE
   ) {
     super(envelope.error);
   }
 }
+
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+
+/** "a", "a and b", "a, b, and c" */
+const conjoin = (items: string[]) =>
+  items.length <= 2
+    ? items.join(" and ")
+    : `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
 
 export function shellQuote(v: unknown): string {
   const str = typeof v === "string" ? v : JSON.stringify(v);
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(str) ? str : `'${str.replace(/'/g, "'\\''")}'`;
 }
 
-/** `monolith <fn> --a <a> --b 42`: supplied fields filled in, missing/invalid ones as `<field>` placeholders. */
+const PLACEHOLDER = /^<[A-Z][A-Z0-9_]*>(\.\.\.)?$/;
+
+/** A recovery step from argv; placeholders render bare, everything else shell-quoted. */
+function step(argv: string[], when: string): NextStep {
+  const command = argv.map((a) => (PLACEHOLDER.test(a) ? a : shellQuote(a))).join(" ");
+  return { command, argv, when };
+}
+
+const helpStep = (path: string): NextStep =>
+  step(["monolith", path, "--help"], `See ${path === "monolith" ? "usage" : `${path} options`}`);
+
+/** `monolith <fn> --a <a> --b 42`: supplied fields filled in, missing/invalid ones as `<FIELD>` placeholders. */
 function commandTemplate(
   fn: AnyFunction,
   args: Record<string, unknown>,
   invalid: ReadonlySet<string> = new Set()
 ) {
   const required = new Set(requiredFields(fn));
-  const parts = [`monolith ${fn.name}`];
+  const argv = ["monolith", fn.name];
   const placeholders: string[] = [];
   for (const key of Object.keys(fn.input.shape)) {
-    const flag = `--${camelToKebab(key)}`;
-    if (key in args && !invalid.has(key)) parts.push(`${flag} ${shellQuote(args[key])}`);
-    else if (invalid.has(key) || required.has(key)) {
-      parts.push(`${flag} <${key}>`);
-      placeholders.push(`<${key}>`);
+    if (key in args && !invalid.has(key)) {
+      const v = args[key];
+      argv.push(optionName(key), typeof v === "string" ? v : JSON.stringify(v));
+    } else if (invalid.has(key) || required.has(key)) {
+      argv.push(optionName(key), placeholder(key));
+      placeholders.push(placeholder(key));
     }
   }
-  return { command: parts.join(" "), placeholders };
+  return { argv, placeholders };
 }
-
-const helpStep = (fn: AnyFunction): NextStep => ({
-  command: `monolith ${fn.name} --help`,
-  when: "See parameter descriptions and examples",
-});
 
 function recoverySteps(
   fn: AnyFunction,
   args: Record<string, unknown>,
   invalid: ReadonlySet<string> = new Set()
 ): NextStep[] {
-  const { command, placeholders } = commandTemplate(fn, args, invalid);
+  const { argv, placeholders } = commandTemplate(fn, args, invalid);
   const when =
     placeholders.length > 0
-      ? `Substitute ${placeholders.join(", ")} and rerun`
-      : "Rerun with only the flags listed";
-  return [{ command, when }, helpStep(fn)];
+      ? `Rerun with ${conjoin(placeholders)} filled in`
+      : "Rerun with only the listed options";
+  return [step(argv, when), helpStep(fn.name)];
 }
 
-/** Reword the shared INVALID_INPUT envelope in terms of flags, and attach recovery steps. */
+/** Reword the shared INVALID_INPUT envelope in terms of options, and attach recovery steps. */
 function validationError(
   fn: AnyFunction,
   envelope: ErrorResponse,
@@ -302,82 +341,69 @@ function validationError(
   const issues = envelope.issues ?? [];
   const field = (issue: ValidationIssue) => issue.path.split(".")[0];
   const missing = [...new Set(issues.map(field).filter((f) => f && !(f in args)))];
-  const lines: string[] = [];
-  if (missing.length > 0)
-    lines.push(`${fn.name} requires ${missing.map((f) => "--" + camelToKebab(f)).join(" and ")}`);
+  const rows: string[] = [];
   for (const issue of issues) {
     if (missing.includes(field(issue))) continue;
     const msg = issue.message.replace(/^Invalid input: /, "");
-    lines.push(issue.path ? `--${camelToKebab(field(issue))}: ${msg}` : msg);
+    rows.push(issue.path ? `${optionName(field(issue))}: ${msg}` : msg);
   }
   const invalid = new Set(issues.map(field).filter(Boolean));
+  const badCount = invalid.size - missing.length;
+  const headline =
+    missing.length > 0
+      ? `Can't run ${fn.name} without ${conjoin(missing.map(optionName))}.`
+      : `Can't run ${fn.name}. ${badCount === 1 ? "1 input is" : `${badCount} inputs are`} invalid.`;
+  return new CliError({
+    ...envelope,
+    error: [headline, ...rows].join("\n"),
+    next: recoverySteps(fn, args, invalid),
+  });
+}
+
+/** Unknown function or command: at most one suggestion, plus a search. */
+function unknownFunction(name: string, exit: number = EXIT.USAGE): CliError {
+  const [suggestion] = suggestFunctions(name, 1);
+  const next = suggestion
+    ? [helpStep(suggestion), step(["monolith", "search", name], "Search functions by keyword")]
+    : [
+        step(["monolith", "search", name], "Search functions by keyword"),
+        step(["monolith", "list"], "List categories"),
+      ];
   return new CliError(
     {
-      ...envelope,
-      error: lines.join("\n") || envelope.error,
-      next: recoverySteps(fn, args, invalid),
+      success: false,
+      error: `Unknown function ${name}.${suggestion ? `\nDid you mean ${suggestion}?` : ""}`,
+      errorCode: ErrorCode.UNKNOWN_FUNCTION,
+      next,
     },
-    1
+    exit
   );
-}
-
-function unknownCommandSteps(name: string): NextStep[] {
-  return [
-    ...suggestFunctions(name).map((s) => ({
-      command: `monolith ${s} --help`,
-      when: `If you meant ${s}`,
-    })),
-    { command: `monolith search ${shellQuote(name)}`, when: "Search functions by keyword" },
-    { command: "monolith list", when: "List all categories" },
-  ];
-}
-
-function unknownFunction(name: string): CliError {
-  const suggestions = suggestFunctions(name);
-  const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
-  return new CliError({
-    success: false,
-    error: `Unknown function: '${name}'.${hint}`,
-    errorCode: ErrorCode.UNKNOWN_FUNCTION,
-    next: unknownCommandSteps(name),
-  });
-}
-
-function missingArgument(command: string, placeholder: string): CliError {
-  return new CliError({
-    success: false,
-    error: `${command} requires ${placeholder}.`,
-    errorCode: "MISSING_ARGUMENT",
-    next: [
-      {
-        command: `monolith ${command} ${placeholder}`,
-        when: `Substitute ${placeholder} and rerun`,
-      },
-      { command: "monolith list", when: "List all categories" },
-    ],
-  });
 }
 
 // ---------------------------------------------------------------------------
 // Output
 // ---------------------------------------------------------------------------
 
+/** JSON for stdout: 2-space indent on a TTY, one compact line otherwise. */
+const jsonText = (v: unknown): string =>
+  JSON.stringify(v, null, process.stdout.isTTY ? 2 : undefined);
+
 function formatErrorProse(envelope: ErrorResponse): string {
-  const lines = [`error: ${envelope.error}`];
-  if (envelope.next?.length) {
+  const [headline, ...rows] = envelope.error.split("\n");
+  const lines = [`Error: ${headline}`, ...rows.map((r) => `  ${r}`)];
+  const next = envelope.next ?? [];
+  if (next.length > 0) {
     lines.push("");
-    for (const step of envelope.next) lines.push(`${step.when}:`, `  ${step.command}`);
+    for (const s of next.slice(0, 2)) lines.push(`${s.when}:`, `    ${s.command}`);
   }
   return lines.join("\n");
 }
 
-/** `--json` puts the envelope on stdout; otherwise prose goes to stderr. `--quiet` silences stdout only. */
+/** Errors always go to stderr: prose, or one compact JSON line under --json. */
 function emitError(envelope: ErrorResponse, parsed: ParsedArgv, exit: number): number {
-  if (parsed.json) {
-    if (!parsed.quiet) process.stdout.write(JSON.stringify(envelope, null, 2) + "\n");
-  } else {
-    process.stderr.write(formatErrorProse(envelope) + "\n");
-  }
+  process.stderr.write(
+    (parsed.json ? JSON.stringify(envelope) : formatErrorProse(envelope)) + "\n"
+  );
   return exit;
 }
 
@@ -388,10 +414,10 @@ const rawScalar = (v: unknown): string =>
 function emitResult(result: SuccessResponse<unknown>, parsed: ParsedArgv): number {
   const v = result.result;
   // Boolean results drive the exit code under --quiet (grep -q style), whatever the format.
-  const exit = parsed.quiet && typeof v === "boolean" && !v ? 1 : 0;
+  const exit = parsed.quiet && typeof v === "boolean" && !v ? EXIT.FAILURE : EXIT.OK;
   if (parsed.quiet) return exit;
   let text: string;
-  if (parsed.json) text = JSON.stringify(result, null, 2);
+  if (parsed.json) text = jsonText(result);
   else if (parsed.raw && Array.isArray(v)) text = v.map(rawScalar).join("\n");
   else if (parsed.raw && v !== null && typeof v === "object")
     text = Object.entries(v as Record<string, unknown>)
@@ -399,147 +425,437 @@ function emitResult(result: SuccessResponse<unknown>, parsed: ParsedArgv): numbe
       .join("\n");
   else if (typeof v === "string") text = v;
   else if (v === null || typeof v !== "object") text = String(v);
-  else text = JSON.stringify(v, null, 2);
+  else text = jsonText(v);
   process.stdout.write(text + "\n");
   return exit;
 }
 
-/** Discovery commands: JSON envelope under --json, prose otherwise. */
-function emitInfo(prose: string, data: unknown, parsed: ParsedArgv): number {
-  if (parsed.quiet) return 0;
-  process.stdout.write(
-    (parsed.json ? JSON.stringify({ success: true, result: data }, null, 2) : prose) + "\n"
-  );
-  return 0;
+/** Discovery commands: the `{success, result}` envelope under --json, human text otherwise. */
+function emitInfo(human: string, data: unknown, parsed: ParsedArgv): number {
+  if (parsed.quiet) return EXIT.OK;
+  const text = parsed.json ? jsonText({ success: true, result: data }) : human;
+  if (text) process.stdout.write(text + "\n");
+  return EXIT.OK;
+}
+
+/** Optional guidance for humans; stderr only, never under --json or --quiet. */
+function emitHint(when: string, command: string, parsed: ParsedArgv): void {
+  if (parsed.json || parsed.quiet) return;
+  process.stderr.write(`\n${when}:\n    ${command}\n`);
+}
+
+/**
+ * A borderless table. On a TTY: aligned columns with a header. Otherwise:
+ * header kept, one tab between columns, never padded or truncated.
+ */
+function table(headers: string[], rows: string[][]): string {
+  const all = [headers, ...rows];
+  if (!process.stdout.isTTY) return all.map((r) => r.join("\t")).join("\n");
+  const widths = headers.map((_, i) => Math.max(...all.map((r) => r[i].length)));
+  return all
+    .map((r) => r.map((cell, i) => (i === r.length - 1 ? cell : cell.padEnd(widths[i]))).join("  "))
+    .join("\n");
 }
 
 // ---------------------------------------------------------------------------
 // Help
 // ---------------------------------------------------------------------------
 
-function rootHelp(): string {
-  return `monolith ${VERSION} — deterministic utility CLI (${functions.length} functions)
+const WIDTH = 80;
 
-Usage:
-  monolith <category/function> [args...] [--flag value] [--json|--raw|-q]
-  monolith <category/function> --args '{"field": value, ...}'
-  monolith pipe <fn> [<fn>...]        # chain functions; value from stdin or --input
-  monolith batch                      # JSONL {"name","args"} on stdin → JSONL results
-  monolith list [category]            # categories, or functions in one category
-  monolith search <query>             # keyword search
-  monolith describe <name>            # parameters, return value, examples (JSON)
-  monolith schema [name]              # JSON Schema for one or all functions
-  monolith --help | --version
-
-Arguments bind in this order: --args JSON, --flags, piped stdin (first required
-field), then positionals in declaration order. Values are JSON-parsed unless the
-field is a string. Use -- to end flag parsing when a value starts with --.
-
-Examples:
-  monolith strings/toCamelCase "hello world"
-  echo "hello world" | monolith strings/slugify
-  echo "Hello World" | monolith strings/truncate 8
-  monolith math/clamp 100 --min 0 --max 50
-  monolith dates/addDays --iso-date 2026-05-08 --days 7
-  cat config.yaml | monolith conversion/yamlToJson | jq .key
-  monolith validation/isEmail "x@y.com" -q && echo ok
-  monolith data/arrays/unique '[1,2,2,3]' --raw
-  echo "My Post" | monolith pipe strings/slugify encoding/base64Encode
-
-Output flags:
-  --json      Full {success, result} envelope on stdout; errors as
-              {success:false, errorCode, error, next:[{command, when}]}
-  --raw       Line-oriented: arrays one item per line, objects key=value per line
-  -q, --quiet No stdout; boolean results set the exit code (0 true, 1 false)
-
-Exit codes: 0 ok · 1 usage or validation error (or --quiet false) · 2 function error.
-Without --json, errors go to stderr with the exact commands to run next.
-
-MCP: when stdin is piped and no arguments are given, monolith runs as an MCP
-stdio server (set MONOLITH_TOOL_MODE=compact for a 6-tool surface).
-`;
+/** Greedy word wrap; never breaks a word, command, or URL. */
+function wrap(text: string, width: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (line && line.length + 1 + word.length > width) {
+      lines.push(line);
+      line = word;
+    } else line = line ? `${line} ${word}` : word;
+  }
+  if (line) lines.push(line);
+  return lines.length > 0 ? lines : [""];
 }
+
+/** Two-column help entries indented 2; a description that doesn't fit moves below its label. */
+function helpRows(rows: Array<[string, string]>): string {
+  const col = Math.min(30, Math.max(...rows.map(([l]) => l.length)) + 4);
+  return rows
+    .flatMap(([label, desc]) => {
+      const head = `  ${label}`;
+      const body = wrap(desc, WIDTH - col);
+      const pad = " ".repeat(col);
+      return head.length + 2 <= col
+        ? [head.padEnd(col) + body[0], ...body.slice(1).map((l) => pad + l)]
+        : [head, ...body.map((l) => pad + l)];
+    })
+    .join("\n");
+}
+
+const section = (title: string, body: string) => `${title}:\n${body}`;
+const prose = (text: string) =>
+  wrap(text, WIDTH - 2)
+    .map((l) => `  ${l}`)
+    .join("\n");
+
+interface BuiltinOption {
+  hint?: string;
+  description: string;
+}
+
+interface Builtin {
+  args: string;
+  summary: string;
+  options?: Record<string, BuiltinOption>;
+  minPositionals: number;
+  maxPositionals: number;
+  examples: string[];
+  notes?: string[];
+}
+
+const BUILTINS: Record<string, Builtin> = {
+  list: {
+    args: "[<CATEGORY>]",
+    summary: "List categories, or the functions in one category",
+    minPositionals: 0,
+    maxPositionals: 1,
+    examples: ["monolith list", "monolith list strings"],
+  },
+  search: {
+    args: "<QUERY>",
+    summary: "Search functions by name, description, and tags",
+    options: { category: { hint: "<CATEGORY>", description: "Only search this category" } },
+    minPositionals: 1,
+    maxPositionals: Infinity,
+    examples: ["monolith search hash", "monolith search case --category strings"],
+    notes: ["No matches is not an error: it prints a notice to stderr and exits 0."],
+  },
+  describe: {
+    args: "<FUNCTION>",
+    summary: "Print a function's parameters, return value, and examples as JSON",
+    minPositionals: 1,
+    maxPositionals: 1,
+    examples: ["monolith describe strings/truncate"],
+  },
+  schema: {
+    args: "[<FUNCTION>]",
+    summary: "Print the input JSON Schema for one function, or for all of them",
+    minPositionals: 0,
+    maxPositionals: 1,
+    examples: ["monolith schema strings/truncate"],
+  },
+  pipe: {
+    args: "<FUNCTION>...",
+    summary: "Chain functions, feeding each result to the next function's primary field",
+    options: { input: { hint: "<VALUE>", description: "Starting value (default: piped stdin)" } },
+    minPositionals: 1,
+    maxPositionals: Infinity,
+    examples: [
+      "echo 'My Post' | monolith pipe strings/slugify encoding/base64Encode",
+      "monolith pipe strings/trim strings/toUpperCase --input '  hi  '",
+    ],
+    notes: ["Stops at the first failing step, names it, and exits 1."],
+  },
+  batch: {
+    args: "",
+    summary: 'Run one {"name", "args"} call per JSONL line on stdin',
+    minPositionals: 0,
+    maxPositionals: 0,
+    examples: [`printf '{"name":"strings/slugify","args":{"input":"A B"}}\\n' | monolith batch`],
+    notes: [
+      "Writes one result envelope per line in input order. Exits 1 if any call failed; the successful results are still written.",
+    ],
+  },
+  help: {
+    args: "[<COMMAND>]",
+    summary: "Show help for monolith, a command, or a function",
+    minPositionals: 0,
+    maxPositionals: 1,
+    examples: ["monolith help strings/truncate"],
+  },
+};
+
+const GLOBAL_OPTIONS: Array<[string, string]> = [
+  ["--args <JSON>", "Pass every argument as one JSON object"],
+  ["-h, --help", "Show help; with --json, print it as JSON"],
+  [
+    "--json",
+    "Print the {success, result} envelope on stdout; errors go to stderr as one JSON line",
+  ],
+  ["-q, --quiet", "Print nothing on stdout; a false boolean result exits 1"],
+  ["--raw", "Print arrays one item per line and objects as key=value lines"],
+  ["-v, --version", "Show the version"],
+];
+
+function rootHelp(): string {
+  return [
+    `monolith ${VERSION}\n${prose(`Run ${functions.length} deterministic utility functions from the shell or over MCP`)}`,
+    section(
+      "Usage",
+      "  monolith <FUNCTION> [<VALUE>...] [options]\n  monolith <COMMAND> [options]"
+    ),
+    section(
+      "Commands",
+      helpRows(Object.entries(BUILTINS).map(([name, b]) => [`${name} ${b.args}`.trim(), b.summary]))
+    ),
+    section("Options", helpRows(GLOBAL_OPTIONS)),
+    section(
+      "Examples",
+      [
+        "monolith strings/toCamelCase 'hello world'",
+        "echo 'Hello World' | monolith strings/truncate 8",
+        "monolith dates/addDays --iso-date 2026-05-08 --days 7",
+        "monolith validation/isEmail x@y.com -q && echo valid",
+        "monolith data/arrays/unique '[1,2,2,3]' --raw",
+        "cat config.yaml | monolith conversion/yamlToJson | jq .key",
+      ]
+        .map((c) => `    ${c}`)
+        .join("\n")
+    ),
+    section(
+      "Notes",
+      [
+        "Arguments bind in this order: --args JSON, options, piped stdin (first required field), then positionals in declaration order. Values are JSON-parsed unless the field is a string. Use -- to end option parsing when a value starts with --.",
+        "Exit codes: 0 success, 1 the function failed or -q saw false, 2 usage error or invalid input, 130 interrupted.",
+        "With no arguments and piped stdin, monolith runs as an MCP stdio server. Set MONOLITH_TOOL_MODE=compact for a 6-tool surface.",
+      ]
+        .map(prose)
+        .join("\n\n")
+    ),
+  ].join("\n\n");
+}
+
+function builtinHelp(name: string, b: Builtin): string {
+  const parts = [
+    section(
+      "Usage",
+      `  monolith ${name} ${b.args ? b.args + " " : ""}[options]\n\n${prose(b.summary)}`
+    ),
+  ];
+  if (b.options)
+    parts.push(
+      section(
+        "Options",
+        helpRows(
+          Object.entries(b.options).map(([k, o]) => [
+            `${optionName(k)} ${o.hint ?? ""}`.trim(),
+            o.description,
+          ])
+        )
+      )
+    );
+  parts.push(
+    section("Global Options", prose("--json, -q/--quiet, -h/--help. See monolith --help."))
+  );
+  parts.push(section("Examples", b.examples.map((c) => `    ${c}`).join("\n")));
+  if (b.notes) parts.push(section("Notes", b.notes.map(prose).join("\n\n")));
+  return parts.join("\n\n");
+}
+
+const TYPE_HINT: Record<string, string> = {
+  string: "<TEXT>",
+  number: "<NUMBER>",
+  integer: "<NUMBER>",
+};
 
 function functionHelp(fn: AnyFunction): string {
   const meta = describeFunction(fn);
-  const params = meta.parameters.map((p) => {
-    const def = p.default !== undefined ? ` (default: ${JSON.stringify(p.default)})` : "";
-    return `  --${camelToKebab(p.name).padEnd(14)} ${p.required ? "(required)" : "          "} ${p.type.padEnd(8)} ${p.description}${def}`;
+  const usageArgs = meta.parameters
+    .map((p) => (p.required ? placeholder(p.name) : `[${placeholder(p.name)}]`))
+    .join(" ");
+  const options = meta.parameters.map((p): [string, string] => {
+    const hint = p.type === "boolean" ? "" : ` ${TYPE_HINT[p.type] ?? "<JSON>"}`;
+    const label =
+      p.type === "boolean"
+        ? `${optionName(p.name)}, --no-${camelToKebab(p.name)}`
+        : optionName(p.name) + hint;
+    const desc = [
+      p.required ? "(required)" : "",
+      p.description,
+      p.enum ? `(accepted: ${p.enum.map(String).join(", ")})` : "",
+      p.default !== undefined ? `(default: ${JSON.stringify(p.default)})` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return [label, desc];
   });
   const examples = meta.examples.map((ex) => {
-    const args = Object.entries(ex.input as Record<string, unknown>)
-      .map(([k, v]) => `--${camelToKebab(k)} ${shellQuote(v)}`)
+    const argv = Object.entries(ex.input as Record<string, unknown>)
+      .map(([k, v]) => `${optionName(k)} ${shellQuote(v)}`)
       .join(" ");
-    return `  # ${ex.description}\n  monolith ${fn.name} ${args}\n  ${typeof ex.output === "string" ? ex.output : JSON.stringify(ex.output)}`;
+    const output = typeof ex.output === "string" ? ex.output : JSON.stringify(ex.output);
+    return `  ${ex.description}\n    monolith ${fn.name} ${argv}\n    => ${output}`;
   });
-  return `${fn.name} — ${fn.description}
+  return [
+    section("Usage", `  monolith ${fn.name} ${usageArgs} [options]\n\n${prose(fn.description)}`),
+    section("Options", helpRows(options)),
+    section(
+      "Global Options",
+      prose("--args, --json, --raw, -q/--quiet, -h/--help. See monolith --help.")
+    ),
+    section("Examples", examples.join("\n\n")),
+    section(
+      "Notes",
+      [
+        `Returns ${fn.returns}`,
+        "Positionals and piped stdin fill options in the order listed above.",
+        `MCP tool name: ${meta.toolName}`,
+      ]
+        .map(prose)
+        .join("\n")
+    ),
+  ].join("\n\n");
+}
 
-Returns: ${fn.returns}
-MCP tool name: ${meta.toolName}
-
-Parameters:
-${params.join("\n")}
-
-Examples:
-${examples.join("\n\n")}
-
-Flags: --json (envelope) · --raw (line-oriented) · -q/--quiet (exit code only) · --args '<json>'
-`;
+/** Help for any path. Works offline, does no work, skips all other validation. */
+function showHelp(path: string | undefined, parsed: ParsedArgv): number {
+  if (path === undefined || path === "monolith") {
+    const data = {
+      path: "monolith",
+      version: VERSION,
+      commands: Object.entries(BUILTINS).map(([name, b]) => ({ path: name, summary: b.summary })),
+      categories: listCategories(),
+    };
+    process.stdout.write((parsed.json ? jsonText(data) : rootHelp()) + "\n");
+    return EXIT.OK;
+  }
+  const builtin = BUILTINS[path];
+  if (builtin) {
+    const data = {
+      path,
+      summary: builtin.summary,
+      arguments: builtin.args,
+      options: builtin.options ?? {},
+    };
+    process.stdout.write((parsed.json ? jsonText(data) : builtinHelp(path, builtin)) + "\n");
+    return EXIT.OK;
+  }
+  const fn = getFunction(path);
+  if (!fn) throw unknownFunction(path);
+  process.stdout.write((parsed.json ? jsonText(describeFunction(fn)) : functionHelp(fn)) + "\n");
+  return EXIT.OK;
 }
 
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
 
+/** Leaf commands reject unknown options and wrong positional counts before any work. */
+function checkBuiltinUsage(name: string, parsed: ParsedArgv): void {
+  const b = BUILTINS[name];
+  const allowed = Object.keys(b.options ?? {});
+  for (const key of Object.keys(parsed.flags)) {
+    if (!allowed.includes(key)) {
+      throw new CliError({
+        success: false,
+        error: `Unknown option ${optionName(key)} for monolith ${name}.${allowed.length ? `\nValid options: ${allowed.map(optionName).join(", ")}` : ""}`,
+        errorCode: "UNKNOWN_OPTION",
+        next: [helpStep(name)],
+      });
+    }
+  }
+  const n = parsed.positionals.length;
+  const usage = `monolith ${name} ${b.args}`.trim();
+  if (n < b.minPositionals) {
+    const missing = b.args.split(" ")[0].replace(/\.\.\.$/, "");
+    throw new CliError({
+      success: false,
+      error: `Can't run monolith ${name} without ${missing}.`,
+      errorCode: "MISSING_ARGUMENT",
+      next: [
+        { command: usage, when: `Rerun with ${missing} filled in` },
+        step(["monolith", "list"], "List categories"),
+      ],
+    });
+  }
+  if (n > b.maxPositionals) {
+    throw new CliError({
+      success: false,
+      error: `Too many arguments for monolith ${name}. Expected ${b.args || "none"}, got ${plural(n, "argument")}.`,
+      errorCode: "TOO_MANY_ARGUMENTS",
+      next: [helpStep(name)],
+    });
+  }
+}
+
+const notFoundCategory = (category: string) =>
+  new CliError(
+    {
+      success: false,
+      error: `Couldn't find category ${category}.`,
+      errorCode: "UNKNOWN_CATEGORY",
+      next: [step(["monolith", "list"], "See the available categories")],
+    },
+    EXIT.FAILURE
+  );
+
 function listCommand(category: string | undefined, parsed: ParsedArgv): number {
   if (!category) {
     const cats = listCategories();
-    const prose = `Categories (${functions.length} functions):\n${cats.map((c) => `  ${c.name.padEnd(12)} ${String(c.count).padStart(3)}  ${c.description}`).join("\n")}\n\nRun \`monolith list <category>\` to see its functions.`;
-    return emitInfo(prose, { categories: cats }, parsed);
+    const code = emitInfo(
+      table(
+        ["Category", "Functions", "Description"],
+        cats.map((c) => [c.name, String(c.count), c.description])
+      ),
+      { categories: cats },
+      parsed
+    );
+    emitHint("See the functions in one category", "monolith list <CATEGORY>", parsed);
+    return code;
   }
   const fns = functions.filter((f) => splitCategory(f.name) === category);
-  if (fns.length === 0) {
-    throw new CliError({
-      success: false,
-      error: `No such category '${category}'.`,
-      errorCode: "UNKNOWN_CATEGORY",
-      next: [{ command: "monolith list", when: "See available categories" }],
-    });
-  }
-  const prose = `${category} functions:\n${fns.map((f) => `  ${f.name.padEnd(30)} ${f.description}`).join("\n")}`;
-  return emitInfo(prose, { functions: fns.map(describeFunction) }, parsed);
+  if (fns.length === 0) throw notFoundCategory(category);
+  return emitInfo(
+    table(
+      ["Function", "Description"],
+      fns.map((f) => [f.name, f.description])
+    ),
+    { functions: fns.map(describeFunction) },
+    parsed
+  );
 }
 
 function searchCommand(query: string, category: string | undefined, parsed: ParsedArgv): number {
+  if (category !== undefined && !listCategories().some((c) => c.name === category))
+    throw notFoundCategory(category);
   const results = searchFunctions(query, category);
-  const prose =
-    results.length === 0
-      ? `No functions match '${query}'.`
-      : `${results.length} match(es) for '${query}':\n${results.map((f) => `  ${f.name.padEnd(30)} ${f.description}`).join("\n")}`;
+  const data = {
+    query,
+    count: results.length,
+    functions: results.map((f) => ({ name: f.name, description: f.description, tags: f.tags })),
+  };
+  if (results.length === 0 && !parsed.json) {
+    // Empty is success: the notice goes to stderr; a pipe still gets the header.
+    if (!parsed.quiet) {
+      const where = category ? ` in ${category}. Remove --category to search all functions` : "";
+      process.stderr.write(`No functions match "${query}"${where}.\n`);
+      if (!process.stdout.isTTY) process.stdout.write("Function\tDescription\n");
+    }
+    return EXIT.OK;
+  }
   return emitInfo(
-    prose,
-    {
-      query,
-      count: results.length,
-      functions: results.map((f) => ({ name: f.name, description: f.description, tags: f.tags })),
-    },
+    table(
+      ["Function", "Description"],
+      results.map((f) => [f.name, f.description])
+    ),
+    data,
     parsed
   );
 }
 
 function describeCommand(name: string, parsed: ParsedArgv): number {
   const fn = getFunction(name);
-  if (!fn) throw unknownFunction(name);
+  if (!fn) throw unknownFunction(name, EXIT.FAILURE);
   const meta = describeFunction(fn);
-  return emitInfo(JSON.stringify(meta, null, 2), meta, parsed);
+  return emitInfo(jsonText(meta), meta, parsed);
 }
 
 function schemaCommand(name: string | undefined, parsed: ParsedArgv): number {
   if (name) {
     const fn = getFunction(name);
-    if (!fn) throw unknownFunction(name);
+    if (!fn) throw unknownFunction(name, EXIT.FAILURE);
     const schema = inputJsonSchema(fn);
-    return emitInfo(JSON.stringify(schema, null, 2), schema, parsed);
+    return emitInfo(jsonText(schema), schema, parsed);
   }
   const all = Object.fromEntries(
     functions.map((fn) => [
@@ -547,24 +863,35 @@ function schemaCommand(name: string | undefined, parsed: ParsedArgv): number {
       { description: fn.description, returns: fn.returns, input: inputJsonSchema(fn) },
     ])
   );
-  return emitInfo(JSON.stringify(all, null, 2), all, parsed);
+  return emitInfo(jsonText(all), all, parsed);
 }
 
 async function pipeCommand(parsed: ParsedArgv): Promise<number> {
-  if (parsed.positionals.length === 0) throw missingArgument("pipe", "<fn> [<fn>...]");
   for (const name of parsed.positionals) if (!getFunction(name)) throw unknownFunction(name);
   const flagInput = parsed.flags.input;
-  const raw = typeof flagInput === "string" ? flagInput : await pipedStdin();
+  if (flagInput === true) {
+    throw new CliError({
+      success: false,
+      error: "Can't run pipe without a value for --input.",
+      errorCode: "MISSING_VALUE",
+      next: [helpStep("pipe")],
+    });
+  }
+  const raw = flagInput ?? (await pipedStdin());
   if (raw === undefined) {
     throw new CliError({
       success: false,
-      error: "pipe needs a value on stdin or via --input.",
+      error: "Can't run pipe without a starting value on stdin or --input.",
       errorCode: "MISSING_ARGUMENT",
       next: [
         {
-          command: `echo <value> | monolith pipe ${parsed.positionals.join(" ")}`,
+          command: `echo <VALUE> | monolith pipe ${parsed.positionals.join(" ")}`,
           when: "Pipe the value in",
         },
+        step(
+          ["monolith", "pipe", ...parsed.positionals, "--input", "<VALUE>"],
+          "Or pass it as an option"
+        ),
       ],
     });
   }
@@ -576,17 +903,22 @@ async function pipeCommand(parsed: ParsedArgv): Promise<number> {
     parsed.positionals.map((name) => ({ name, args: {} }))
   );
   if (!outcome.success) {
-    const step = parsed.positionals[outcome.step];
+    const failed = parsed.positionals[outcome.step];
+    const issues = (outcome.issues as ValidationIssue[] | undefined) ?? [];
+    const detail =
+      issues.length > 0
+        ? issues.map((i) => `${i.path ? optionName(i.path.split(".")[0]) + ": " : ""}${i.message}`)
+        : [outcome.error];
     return emitError(
       {
         success: false,
-        error: `step ${outcome.step} (${step}): ${outcome.error}`,
+        error: `Step ${outcome.step + 1} of ${parsed.positionals.length} (${failed}) failed.\n${detail.join("\n")}`,
         errorCode: outcome.errorCode,
         details: outcome,
-        next: [{ command: `monolith ${step} --help`, when: "Check that step's parameters" }],
+        next: [helpStep(failed)],
       },
       parsed,
-      2
+      EXIT.FAILURE
     );
   }
   return emitResult(outcome, parsed);
@@ -597,7 +929,7 @@ async function batchCommand(parsed: ParsedArgv): Promise<number> {
   if (raw === undefined) {
     throw new CliError({
       success: false,
-      error: 'batch reads JSONL {"name", "args"} lines from stdin.',
+      error: "Can't run batch without JSONL calls on stdin.",
       errorCode: "MISSING_ARGUMENT",
       next: [
         {
@@ -607,6 +939,10 @@ async function batchCommand(parsed: ParsedArgv): Promise<number> {
       ],
     });
   }
+  const lineShape = {
+    command: "monolith batch --help",
+    when: 'Each line is {"name": "...", "args": {...}}',
+  };
   const calls = raw
     .split("\n")
     .filter((line) => line.trim() !== "")
@@ -617,61 +953,79 @@ async function batchCommand(parsed: ParsedArgv): Promise<number> {
       } catch {
         throw new CliError({
           success: false,
-          error: `Line ${i + 1} is not valid JSON.`,
+          error: `Can't parse line ${i + 1}. It isn't valid JSON.`,
           errorCode: "INVALID_ARGS_JSON",
-          next: [
-            { command: "monolith batch", when: 'Each line must be {"name": "...", "args": {...}}' },
-          ],
+          next: [lineShape],
         });
       }
       const parsedCall = callSchema.safeParse(value);
       if (!parsedCall.success) {
         throw new CliError({
           success: false,
-          error: `Line ${i + 1}: ${parsedCall.error.issues.map((iss) => `${iss.path.join(".")}: ${iss.message}`).join("; ")}`,
+          error: `Can't run line ${i + 1}.\n${parsedCall.error.issues.map((iss) => `${iss.path.join(".")}: ${iss.message}`).join("\n")}`,
           errorCode: ErrorCode.INVALID_INPUT,
-          next: [
-            { command: "monolith batch", when: 'Each line must be {"name": "...", "args": {...}}' },
-          ],
+          next: [lineShape],
         });
       }
       return parsedCall.data;
     });
   const results = runBatch(calls);
-  if (parsed.quiet) return results.every((r) => r.success) ? 0 : 2;
+  const exit = results.every((r) => r.success) ? EXIT.OK : EXIT.FAILURE;
+  if (parsed.quiet) return exit;
   process.stdout.write(
     parsed.json
-      ? JSON.stringify({ success: true, result: { results } }, null, 2) + "\n"
+      ? jsonText({ success: true, result: { results } }) + "\n"
       : results.map((r) => JSON.stringify(r)).join("\n") + "\n"
   );
-  return results.every((r) => r.success) ? 0 : 2;
+  return exit;
 }
 
 export async function runCli(argv: string[]): Promise<number> {
   const parsed = parseArgv(argv);
-  if (parsed.version) {
-    process.stdout.write(`monolith ${VERSION}\n`);
-    return 0;
-  }
-  if (parsed.command === undefined) {
-    process.stdout.write(rootHelp());
-    return 0;
-  }
   try {
+    // Help wins over everything, including --version and other validation.
+    if (parsed.help) {
+      if (parsed.command === "help") return showHelp(parsed.positionals[0], parsed);
+      return showHelp(parsed.command, parsed);
+    }
+    if (parsed.version) {
+      process.stdout.write(
+        (parsed.json ? jsonText({ version: VERSION }) : `monolith ${VERSION}`) + "\n"
+      );
+      return EXIT.OK;
+    }
+    if (parsed.command === undefined) {
+      const [unknown] = Object.keys(parsed.flags);
+      if (unknown !== undefined) {
+        throw new CliError({
+          success: false,
+          error: `Unknown option ${optionName(unknown)} for monolith.`,
+          errorCode: "UNKNOWN_OPTION",
+          next: [helpStep("monolith")],
+        });
+      }
+      return showHelp(undefined, parsed);
+    }
+
+    if (parsed.command in BUILTINS) checkBuiltinUsage(parsed.command, parsed);
     switch (parsed.command) {
+      case "help":
+        return showHelp(parsed.positionals[0], parsed);
       case "list":
         return listCommand(parsed.positionals[0], parsed);
       case "search": {
-        if (!parsed.positionals[0]) throw missingArgument("search", "<query>");
         const category = parsed.flags.category;
-        return searchCommand(
-          parsed.positionals.join(" "),
-          typeof category === "string" ? category : undefined,
-          parsed
-        );
+        if (category === true) {
+          throw new CliError({
+            success: false,
+            error: "Can't run search without a value for --category.",
+            errorCode: "MISSING_VALUE",
+            next: [step(["monolith", "list"], "See the available categories")],
+          });
+        }
+        return searchCommand(parsed.positionals.join(" "), category, parsed);
       }
       case "describe":
-        if (!parsed.positionals[0]) throw missingArgument("describe", "<name>");
         return describeCommand(parsed.positionals[0], parsed);
       case "schema":
         return schemaCommand(parsed.positionals[0], parsed);
@@ -683,20 +1037,28 @@ export async function runCli(argv: string[]): Promise<number> {
 
     const fn = getFunction(parsed.command);
     if (!fn) throw unknownFunction(parsed.command);
-    if (parsed.help) {
-      process.stdout.write(functionHelp(fn));
-      return 0;
-    }
     const args = await buildArgs(fn, parsed);
     const result = execute(fn, args);
     if (!result.success) {
       if (result.errorCode === ErrorCode.INVALID_INPUT) throw validationError(fn, result, args);
-      return emitError({ ...result, next: [helpStep(fn)] }, parsed, 2);
+      return emitError({ ...result, next: [helpStep(fn.name)] }, parsed, EXIT.FAILURE);
     }
     return emitResult(result, parsed);
   } catch (error) {
     if (error instanceof CliError) return emitError(error.envelope, parsed, error.exit);
     const message = error instanceof Error ? error.message : String(error);
-    return emitError({ success: false, error: message, errorCode: "CLI_ERROR" }, parsed, 1);
+    return emitError(
+      {
+        success: false,
+        error:
+          `Unexpected error in monolith ${parsed.command ?? ""}. This is a bug in monolith.\n${message}`.replace(
+            " .",
+            "."
+          ),
+        errorCode: "INTERNAL_ERROR",
+      },
+      parsed,
+      EXIT.FAILURE
+    );
   }
 }
